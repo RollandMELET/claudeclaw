@@ -16,6 +16,7 @@ import { clearSession, getRecentConversation, getRecentMemories, getSession, set
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, saveConversationTurn } from './memory.js';
+import { emitChatEvent, setProcessing, setActiveAbort, abortActiveQuery } from './state.js';
 
 // ── Context window tracking ──────────────────────────────────────────
 // Uses input_tokens from the last API call (= actual context window size:
@@ -295,6 +296,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     'Processing message',
   );
 
+  // Emit user message to SSE clients
+  emitChatEvent({ type: 'user_message', chatId: chatIdStr, content: message, source: 'telegram' });
+
   // Build memory context and prepend to message
   const memCtx = await buildMemoryContext(chatIdStr, message);
   const fullMessage = memCtx ? `${memCtx}\n\n${message}` : message;
@@ -308,24 +312,45 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     TYPING_REFRESH_MS,
   );
 
+  setProcessing(chatIdStr, true);
+
   try {
-    // Progress callback: surface sub-agent lifecycle events to Telegram
+    // Progress callback: surface sub-agent lifecycle events to Telegram + SSE
     const onProgress = (event: AgentProgressEvent) => {
       if (event.type === 'task_started') {
+        emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
         void ctx.reply(`🔄 ${event.description}`).catch(() => {});
       } else if (event.type === 'task_completed') {
+        emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
         void ctx.reply(`✓ ${event.description}`).catch(() => {});
+      } else if (event.type === 'tool_active') {
+        // Dashboard only — don't spam Telegram with every tool use
+        emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
       }
     };
+
+    const abortCtrl = new AbortController();
+    setActiveAbort(chatIdStr, abortCtrl);
 
     const result = await runAgent(
       fullMessage,
       sessionId,
       () => void sendTyping(ctx.api, chatId),
       onProgress,
+      undefined,
+      abortCtrl,
     );
 
+    setActiveAbort(chatIdStr, null);
     clearInterval(typingInterval);
+
+    // Handle abort — send short confirmation and stop
+    if (result.aborted) {
+      setProcessing(chatIdStr, false);
+      emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: 'Stopped.', source: 'telegram' });
+      await ctx.reply('Stopped.');
+      return;
+    }
 
     if (result.newSessionId) {
       setSession(chatIdStr, result.newSessionId);
@@ -342,6 +367,9 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     if (!skipLog) {
       saveConversationTurn(chatIdStr, message, rawResponse, result.newSessionId ?? sessionId);
     }
+
+    // Emit assistant response to SSE clients
+    emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'telegram' });
 
     // Send any attached files first
     for (const file of fileMarkers) {
@@ -372,7 +400,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       if (shouldSpeakBack) {
         try {
           const audioBuffer = await synthesizeSpeech(responseText);
-          await ctx.replyWithVoice(new InputFile(audioBuffer, 'response.mp3'));
+          await ctx.replyWithVoice(new InputFile(audioBuffer, 'response.ogg'));
         } catch (ttsErr) {
           logger.error({ err: ttsErr }, 'TTS failed, falling back to text');
           for (const part of splitMessage(formatForTelegram(responseText))) {
@@ -405,8 +433,12 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
         await ctx.reply(warning);
       }
     }
+
+    setProcessing(chatIdStr, false);
   } catch (err) {
     clearInterval(typingInterval);
+    setActiveAbort(chatIdStr, null);
+    setProcessing(chatIdStr, false);
     logger.error({ err }, 'Agent error');
 
     // Detect context window exhaustion (process exits with code 1 after long sessions)
@@ -767,7 +799,8 @@ export function createBot(): Bot {
     // Clear WA/Slack state and pass through to Claude
     if (state) waState.delete(chatIdStr);
     if (slkState) slackState.delete(chatIdStr);
-    await handleMessage(ctx, text);
+    // Fire-and-forget so grammY can process /stop while agent runs
+    void handleMessage(ctx, text);
   });
 
   // Voice messages — real transcription via Groq Whisper
@@ -795,7 +828,7 @@ export function createBot(): Bot {
       clearInterval(typingInterval);
       // Only reply with voice if explicitly requested — otherwise execute and respond in text
       const wantsVoiceBack = /\b(respond (with|via|in) voice|send (me )?(a )?voice( note| back)?|voice reply|reply (with|via) voice)\b/i.test(transcribed);
-      await handleMessage(ctx, `[Voice transcribed]: ${transcribed}`, wantsVoiceBack);
+      void handleMessage(ctx, `[Voice transcribed]: ${transcribed}`, wantsVoiceBack);
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Voice transcription failed');
@@ -821,7 +854,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(TELEGRAM_BOT_TOKEN, photo.file_id, 'photo.jpg');
       clearInterval(typingInterval);
       const msg = buildPhotoMessage(localPath, ctx.message.caption ?? undefined);
-      await handleMessage(ctx, msg);
+      void handleMessage(ctx, msg);
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Photo download failed');
@@ -848,7 +881,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(TELEGRAM_BOT_TOKEN, doc.file_id, filename);
       clearInterval(typingInterval);
       const msg = buildDocumentMessage(localPath, filename, ctx.message.caption ?? undefined);
-      await handleMessage(ctx, msg);
+      void handleMessage(ctx, msg);
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Document download failed');
@@ -873,7 +906,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(TELEGRAM_BOT_TOKEN, video.file_id, filename);
       clearInterval(typingInterval);
       const msg = buildVideoMessage(localPath, ctx.message.caption ?? undefined);
-      await handleMessage(ctx, msg);
+      void handleMessage(ctx, msg);
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Video download failed');
@@ -898,7 +931,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(TELEGRAM_BOT_TOKEN, videoNote.file_id, filename);
       clearInterval(typingInterval);
       const msg = buildVideoMessage(localPath, undefined);
-      await handleMessage(ctx, msg);
+      void handleMessage(ctx, msg);
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Video note download failed');
@@ -912,6 +945,96 @@ export function createBot(): Bot {
   });
 
   return bot;
+}
+
+/**
+ * Process a message sent from the dashboard web UI.
+ * Runs the agent pipeline and relays the response to Telegram.
+ * Response is delivered via SSE (fire-and-forget from the caller's perspective).
+ */
+export async function processMessageFromDashboard(
+  botApi: Api<RawApi>,
+  text: string,
+): Promise<void> {
+  if (!ALLOWED_CHAT_ID) return;
+
+  const chatIdStr = ALLOWED_CHAT_ID;
+
+  logger.info({ messageLen: text.length, source: 'dashboard' }, 'Processing dashboard message');
+
+  emitChatEvent({ type: 'user_message', chatId: chatIdStr, content: text, source: 'dashboard' });
+  setProcessing(chatIdStr, true);
+
+  try {
+    const memCtx = await buildMemoryContext(chatIdStr, text);
+    const fullMessage = memCtx ? `${memCtx}\n\n${text}` : text;
+    const sessionId = getSession(chatIdStr);
+
+    const onProgress = (event: AgentProgressEvent) => {
+      emitChatEvent({ type: 'progress', chatId: chatIdStr, description: event.description });
+    };
+
+    const abortCtrl = new AbortController();
+    setActiveAbort(chatIdStr, abortCtrl);
+
+    const result = await runAgent(
+      fullMessage,
+      sessionId,
+      () => {}, // no typing action for dashboard
+      onProgress,
+      undefined,
+      abortCtrl,
+    );
+
+    setActiveAbort(chatIdStr, null);
+
+    // Handle abort
+    if (result.aborted) {
+      emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: 'Stopped.', source: 'dashboard' });
+      return;
+    }
+
+    if (result.newSessionId) {
+      setSession(chatIdStr, result.newSessionId);
+    }
+
+    const rawResponse = result.text?.trim() || 'Done.';
+
+    // Save conversation turn
+    saveConversationTurn(chatIdStr, text, rawResponse, result.newSessionId ?? sessionId, 'dashboard');
+
+    // Emit assistant response to SSE clients
+    emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'dashboard' });
+
+    // Relay to Telegram so the user sees it there too
+    const { text: responseText } = extractFileMarkers(rawResponse);
+    if (responseText) {
+      for (const part of splitMessage(formatForTelegram(responseText))) {
+        await botApi.sendMessage(parseInt(chatIdStr), part, { parse_mode: 'HTML' });
+      }
+    }
+
+    // Log token usage
+    if (result.usage) {
+      const activeSessionId = result.newSessionId ?? sessionId;
+      saveTokenUsage(
+        chatIdStr,
+        activeSessionId,
+        result.usage.inputTokens,
+        result.usage.outputTokens,
+        result.usage.lastCallCacheRead,
+        result.usage.lastCallInputTokens,
+        result.usage.totalCostUsd,
+        result.usage.didCompact,
+      );
+    }
+  } catch (err) {
+    setActiveAbort(chatIdStr, null);
+    logger.error({ err }, 'Dashboard message processing error');
+    emitChatEvent({ type: 'error', chatId: chatIdStr, content: 'Something went wrong. Check the logs.' });
+  } finally {
+    setProcessing(chatIdStr, false);
+  }
 }
 
 /**
