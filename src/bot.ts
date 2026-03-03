@@ -569,7 +569,7 @@ export function createBot(): Bot {
     if (!isAuthorised(ctx.chat!.id)) return;
     const caps = voiceCapabilities();
     if (!caps.tts) {
-      await ctx.reply('ElevenLabs not configured. Add ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID to .env');
+      await ctx.reply('No TTS provider configured. Add ElevenLabs, Gradium, or install ffmpeg for macOS say fallback.');
       return;
     }
     const chatIdStr = ctx.chat!.id.toString();
@@ -1091,7 +1091,7 @@ export async function processMessageFromDashboard(
     const rawResponse = result.text?.trim() || 'Done.';
 
     // Save conversation turn
-    saveConversationTurn(chatIdStr, text, rawResponse, result.newSessionId ?? sessionId, 'dashboard');
+    saveConversationTurn(chatIdStr, text, rawResponse, result.newSessionId ?? sessionId);
 
     // Emit assistant response to SSE clients
     emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'dashboard' });
