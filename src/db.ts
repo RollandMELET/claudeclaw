@@ -170,7 +170,12 @@ function runMigrations(database: Database.Database): void {
   const pkCount = sessionCols.filter((c) => c.pk > 0).length;
   if (pkCount < 2) {
     // Need to recreate table with composite PK
+    const hasAgentCol = sessionCols.some((c) => c.name === 'agent_id');
+    const selectSql = hasAgentCol
+      ? `SELECT chat_id, COALESCE(agent_id, 'main'), session_id, updated_at FROM sessions`
+      : `SELECT chat_id, 'main', session_id, updated_at FROM sessions`;
     database.exec(`
+      DROP TABLE IF EXISTS sessions_new;
       CREATE TABLE sessions_new (
         chat_id    TEXT NOT NULL,
         agent_id   TEXT NOT NULL DEFAULT 'main',
@@ -179,7 +184,7 @@ function runMigrations(database: Database.Database): void {
         PRIMARY KEY (chat_id, agent_id)
       );
       INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, session_id, updated_at)
-        SELECT chat_id, COALESCE(agent_id, 'main'), session_id, updated_at FROM sessions;
+        ${selectSql};
       DROP TABLE sessions;
       ALTER TABLE sessions_new RENAME TO sessions;
     `);
