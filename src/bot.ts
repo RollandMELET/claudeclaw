@@ -19,6 +19,7 @@ import { clearSession, getRecentConversation, getRecentMemories, getSession, set
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, saveConversationTurn } from './memory.js';
+import { messageQueue } from './message-queue.js';
 import { emitChatEvent, setProcessing, setActiveAbort, abortActiveQuery } from './state.js';
 
 // ── Context window tracking ──────────────────────────────────────────
@@ -910,7 +911,7 @@ export function createBot(): Bot {
     if (state) waState.delete(chatIdStr);
     if (slkState) slackState.delete(chatIdStr);
     // Fire-and-forget so grammY can process /stop while agent runs
-    handleMessage(ctx, text).catch((err) => logger.error({ err }, 'Unhandled message error'));
+    messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, text));
   });
 
   // Voice messages — real transcription via Groq Whisper
@@ -938,7 +939,7 @@ export function createBot(): Bot {
       clearInterval(typingInterval);
       // Only reply with voice if explicitly requested — otherwise execute and respond in text
       const wantsVoiceBack = /\b(respond (with|via|in) voice|send (me )?(a )?voice( note| back)?|voice reply|reply (with|via) voice)\b/i.test(transcribed);
-      handleMessage(ctx, `[Voice transcribed]: ${transcribed}`, wantsVoiceBack).catch((err) => logger.error({ err }, 'Unhandled voice message error'));
+      messageQueue.enqueue(chatId.toString(), () => handleMessage(ctx, `[Voice transcribed]: ${transcribed}`, wantsVoiceBack));
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Voice transcription failed');
@@ -964,7 +965,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(activeBotToken, photo.file_id, 'photo.jpg');
       clearInterval(typingInterval);
       const msg = buildPhotoMessage(localPath, ctx.message.caption ?? undefined);
-      handleMessage(ctx, msg).catch((err) => logger.error({ err }, 'Unhandled photo message error'));
+      messageQueue.enqueue(chatId.toString(), () => handleMessage(ctx, msg));
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Photo download failed');
@@ -991,7 +992,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(activeBotToken, doc.file_id, filename);
       clearInterval(typingInterval);
       const msg = buildDocumentMessage(localPath, filename, ctx.message.caption ?? undefined);
-      handleMessage(ctx, msg).catch((err) => logger.error({ err }, 'Unhandled document message error'));
+      messageQueue.enqueue(chatId.toString(), () => handleMessage(ctx, msg));
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Document download failed');
@@ -1016,7 +1017,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(activeBotToken, video.file_id, filename);
       clearInterval(typingInterval);
       const msg = buildVideoMessage(localPath, ctx.message.caption ?? undefined);
-      handleMessage(ctx, msg).catch((err) => logger.error({ err }, 'Unhandled video message error'));
+      messageQueue.enqueue(chatId.toString(), () => handleMessage(ctx, msg));
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Video download failed');
@@ -1041,7 +1042,7 @@ export function createBot(): Bot {
       const localPath = await downloadMedia(activeBotToken, videoNote.file_id, filename);
       clearInterval(typingInterval);
       const msg = buildVideoMessage(localPath, undefined);
-      handleMessage(ctx, msg).catch((err) => logger.error({ err }, 'Unhandled video note message error'));
+      messageQueue.enqueue(chatId.toString(), () => handleMessage(ctx, msg));
     } catch (err) {
       clearInterval(typingInterval);
       logger.error({ err }, 'Video note download failed');
