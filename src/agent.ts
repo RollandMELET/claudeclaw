@@ -63,6 +63,8 @@ export interface AgentResult {
   newSessionId: string | undefined;
   usage: UsageInfo | null;
   aborted?: boolean;
+  /** True if the SDK reported an authentication failure (expired OAuth token, etc.) */
+  authError?: boolean;
 }
 
 /**
@@ -129,6 +131,7 @@ export async function runAgent(
   let preCompactTokens: number | null = null;
   let lastCallCacheRead = 0;
   let lastCallInputTokens = 0;
+  let authError = false;
 
   // Refresh typing indicator on an interval while Claude works.
   // Telegram's "typing..." action expires after ~5s.
@@ -172,6 +175,16 @@ export async function runAgent(
       if (ev['type'] === 'system' && ev['subtype'] === 'init') {
         newSessionId = ev['session_id'] as string;
         logger.info({ newSessionId }, 'Session initialized');
+      }
+
+      // Detect authentication failures from SDK
+      if (ev['type'] === 'auth_status' && ev['error']) {
+        authError = true;
+        logger.error({ authError: ev['error'], output: ev['output'] }, 'Authentication failed');
+      }
+      if (ev['type'] === 'assistant' && ev['error'] === 'authentication_failed') {
+        authError = true;
+        logger.error({ error: ev['error'] }, 'API authentication failed');
       }
 
       // Detect auto-compaction (context window was getting full)
@@ -260,10 +273,19 @@ export async function runAgent(
       logger.info('Agent query aborted by user');
       return { text: null, newSessionId, usage, aborted: true };
     }
+    // Enrich error with auth flag and partial result text (helps diagnose auth vs context)
+    if (err instanceof Error) {
+      if (authError || resultText?.toLowerCase().includes('authenticate') || resultText?.toLowerCase().includes('401')) {
+        err.message += ' [auth_failure]';
+      }
+      if (resultText) {
+        err.message += ` | Last response: ${resultText.slice(0, 200)}`;
+      }
+    }
     throw err;
   } finally {
     clearInterval(typingInterval);
   }
 
-  return { text: resultText, newSessionId, usage };
+  return { text: resultText, newSessionId, usage, authError };
 }

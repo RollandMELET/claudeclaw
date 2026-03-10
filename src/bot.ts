@@ -468,19 +468,27 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
     setProcessing(chatIdStr, false);
     logger.error({ err }, 'Agent error');
 
-    // Detect context window exhaustion (process exits with code 1 after long sessions)
     const errMsg = err instanceof Error ? err.message : String(err);
     if (errMsg.includes('exited with code 1')) {
-      const usage = lastUsage.get(chatIdStr);
-      const contextSize = usage?.lastCallInputTokens || usage?.lastCallCacheRead || 0;
-      if (contextSize > 0) {
-        // We have prior usage data — context exhaustion is plausible
+      // Priority 1: Auth failure (expired OAuth token, 401, etc.)
+      if (errMsg.includes('[auth_failure]') || errMsg.includes('authenticate') || errMsg.includes('401')) {
         await ctx.reply(
-          `Context window likely exhausted. Last known context: ~${Math.round(contextSize / 1000)}k tokens.\n\nUse /newchat to start fresh, then /respin to pull recent conversation back in.`,
+          '🔑 Authentication failed (OAuth token expired).\n\n' +
+          'Fix: run `claude login` on the Mac Mini, then restart ClaudeClaw.\n' +
+          'Or: `scp ~/.claude/.credentials.json macmini:~/.claude/.credentials.json`',
         );
       } else {
-        // No prior usage — likely a subprocess init failure, not context exhaustion
-        await ctx.reply('Claude Code subprocess failed to start. Check logs or try /newchat.');
+        // Priority 2: Context exhaustion (only if we have recent usage data)
+        const usage = lastUsage.get(chatIdStr);
+        const contextSize = usage?.lastCallInputTokens || usage?.lastCallCacheRead || 0;
+        if (contextSize > 50000) {
+          await ctx.reply(
+            `Context window likely exhausted (~${Math.round(contextSize / 1000)}k tokens).\n\nUse /newchat to start fresh, then /respin to pull recent conversation back in.`,
+          );
+        } else {
+          // Priority 3: Unknown subprocess crash
+          await ctx.reply('Claude Code subprocess crashed (exit code 1). Check /tmp/claudeclaw.log.');
+        }
       }
     } else {
       await ctx.reply('Something went wrong. Check the logs and try again.');
@@ -554,9 +562,10 @@ export function createBot(): Bot {
     const chatIdStr = ctx.chat!.id.toString();
     const oldSessionId = getSession(chatIdStr, AGENT_ID);
     clearSession(chatIdStr, AGENT_ID);
-    // Clear context baseline so next session starts clean
+    // Clear context baseline and stale usage so next session starts clean
     if (oldSessionId) sessionBaseline.delete(oldSessionId);
     sessionBaseline.delete(chatIdStr);
+    lastUsage.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
     logger.info({ chatId: ctx.chat!.id }, 'Session cleared by user');
   });
