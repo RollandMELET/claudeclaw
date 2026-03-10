@@ -9,6 +9,7 @@ import { initDatabase } from './db.js';
 import { logger } from './logger.js';
 import { cleanupOldUploads } from './media.js';
 import { runDecaySweep } from './memory.js';
+import { initOAuthHealthCheck } from './oauth-health.js';
 import { initScheduler } from './scheduler.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
 
@@ -98,6 +99,10 @@ async function main(): Promise<void> {
     initScheduler(
       (text) => bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).then(() => {}).catch((err) => logger.error({ err }, 'Scheduler failed to send message')),
       AGENT_ID,
+    );
+    // Proactive OAuth health monitoring — alerts on Telegram before token expires
+    initOAuthHealthCheck(
+      (text) => bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).then(() => {}).catch((err) => logger.error({ err }, 'OAuth health check failed to send message')),
     );
   } else {
     logger.warn('ALLOWED_CHAT_ID not set — scheduler disabled (no destination for results)');
