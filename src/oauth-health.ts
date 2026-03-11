@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 
 import { logger } from './logger.js';
+import { readEnvFile } from './env.js';
 
 type Sender = (text: string) => Promise<void>;
 
@@ -34,6 +35,14 @@ function readCredentials(): Credentials | null {
 }
 
 async function checkOAuthHealth(sender: Sender): Promise<void> {
+  // If a long-lived setup token is configured in .env, the credentials file is irrelevant
+  const env = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN']);
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+    logger.debug('Using long-lived env token (CLAUDE_CODE_OAUTH_TOKEN), skipping credentials check');
+    lastAlertLevel = 'none';
+    return;
+  }
+
   const creds = readCredentials();
 
   if (!creds?.claudeAiOauth?.expiresAt) {
