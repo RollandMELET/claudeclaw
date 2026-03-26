@@ -6,12 +6,18 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# Resolve config directory — CLAUDECLAW_CONFIG from .env or environment, default ~/.claudeclaw
+if [ -z "$CLAUDECLAW_CONFIG" ]; then
+  CLAUDECLAW_CONFIG=$(grep '^CLAUDECLAW_CONFIG=' .env 2>/dev/null | cut -d'=' -f2- | sed "s|^~|$HOME|")
+fi
+CLAUDECLAW_CONFIG="${CLAUDECLAW_CONFIG:-$HOME/.claudeclaw}"
+
 echo "=== ClaudeClaw Agent Creator ==="
 echo ""
 
 # Step 1: Pick a template or start blank
 echo "Available templates:"
-echo "  1. comms     -- Email, Slack, WhatsApp, YouTube comments, Skool, LinkedIn"
+echo "  1. comms     -- Email, Slack, WhatsApp, YouTube comments, community forums, LinkedIn"
 echo "  2. content   -- YouTube, LinkedIn, writing, trend research"
 echo "  3. ops       -- Calendar, billing, Stripe, Gumroad, admin"
 echo "  4. research  -- Deep research, academic, competitive intel"
@@ -30,7 +36,15 @@ esac
 
 # Step 2: Name the agent
 read -p "Agent ID (lowercase, no spaces, e.g. 'comms'): " AGENT_ID
-AGENT_DIR="agents/$AGENT_ID"
+
+# Config goes to CLAUDECLAW_CONFIG if the dir exists, otherwise repo's agents/
+if [ -d "$CLAUDECLAW_CONFIG" ]; then
+  AGENT_DIR="$CLAUDECLAW_CONFIG/agents/$AGENT_ID"
+  echo "Config directory: $AGENT_DIR (external)"
+else
+  AGENT_DIR="agents/$AGENT_ID"
+  echo "Config directory: $AGENT_DIR (in repo)"
+fi
 
 if [ -d "$AGENT_DIR" ] && [ -f "$AGENT_DIR/agent.yaml" ]; then
   echo "Agent '$AGENT_ID' already exists at $AGENT_DIR"
@@ -44,8 +58,8 @@ fi
 # Step 3: Copy template
 mkdir -p "$AGENT_DIR"
 if [ "$TEMPLATE" != "$AGENT_ID" ]; then
-  cp "agents/$TEMPLATE/CLAUDE.md" "$AGENT_DIR/CLAUDE.md"
-  cp "agents/$TEMPLATE/agent.yaml.example" "$AGENT_DIR/agent.yaml.example"
+  cp "agents/$TEMPLATE/CLAUDE.md" "$AGENT_DIR/CLAUDE.md" 2>/dev/null || \
+    cp "agents/$TEMPLATE/CLAUDE.md.example" "$AGENT_DIR/CLAUDE.md" 2>/dev/null || true
 fi
 
 # Step 4: Create Telegram bot
@@ -55,7 +69,8 @@ echo "Now create a Telegram bot for this agent:"
 echo ""
 echo "  1. Open Telegram and message @BotFather"
 echo "  2. Send /newbot"
-echo "  3. Name it something like 'Mark ${AGENT_ID^}' or 'ClaudeClaw ${AGENT_ID^}'"
+AGENT_LABEL=$(echo "$AGENT_ID" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
+echo "  3. Name it something like 'Mark $AGENT_LABEL' or 'ClaudeClaw $AGENT_LABEL'"
 echo "  4. Give it a username like 'mark_${AGENT_ID}_bot'"
 echo "  5. Copy the token BotFather gives you"
 echo ""
@@ -79,7 +94,7 @@ fi
 
 # Step 5: Create agent.yaml from example
 sed "s/telegram_bot_token_env:.*/telegram_bot_token_env: $ENV_KEY/" \
-  "$AGENT_DIR/agent.yaml.example" > "$AGENT_DIR/agent.yaml"
+  "agents/$TEMPLATE/agent.yaml.example" > "$AGENT_DIR/agent.yaml"
 
 # Step 6: Show chat ID info
 CHAT_ID=$(grep '^ALLOWED_CHAT_ID=' .env 2>/dev/null | cut -d'=' -f2-)

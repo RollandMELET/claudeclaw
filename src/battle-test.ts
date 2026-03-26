@@ -21,18 +21,18 @@ function assert(label: string, condition: boolean): void {
 
 // Test 1: Session isolation
 console.log('\n--- TEST 1: Session isolation ---');
-setSession('5586695492', 'main-session-123', 'main');
-setSession('5586695492', 'ops-session-456', 'ops');
-setSession('5586695492', 'research-session-789', 'research');
+setSession('1234567890', 'main-session-123', 'main');
+setSession('1234567890', 'ops-session-456', 'ops');
+setSession('1234567890', 'research-session-789', 'research');
 
-assert('Main session correct', getSession('5586695492', 'main') === 'main-session-123');
-assert('Ops session correct', getSession('5586695492', 'ops') === 'ops-session-456');
-assert('Research session correct', getSession('5586695492', 'research') === 'research-session-789');
+assert('Main session correct', getSession('1234567890', 'main') === 'main-session-123');
+assert('Ops session correct', getSession('1234567890', 'ops') === 'ops-session-456');
+assert('Research session correct', getSession('1234567890', 'research') === 'research-session-789');
 
-clearSession('5586695492', 'ops');
-assert('Ops cleared', getSession('5586695492', 'ops') === undefined);
-assert('Main unaffected after ops clear', getSession('5586695492', 'main') === 'main-session-123');
-assert('Research unaffected after ops clear', getSession('5586695492', 'research') === 'research-session-789');
+clearSession('1234567890', 'ops');
+assert('Ops cleared', getSession('1234567890', 'ops') === undefined);
+assert('Main unaffected after ops clear', getSession('1234567890', 'main') === 'main-session-123');
+assert('Research unaffected after ops clear', getSession('1234567890', 'research') === 'research-session-789');
 
 // Test 2: Agent-scoped tasks
 console.log('\n--- TEST 2: Agent-scoped tasks ---');
@@ -51,9 +51,9 @@ assert('Research tasks only contain research agent_id', resTasks.every((t: any) 
 
 // Test 3: Token usage per agent
 console.log('\n--- TEST 3: Token usage per agent ---');
-saveTokenUsage('5586695492', 'sess1', 1000, 500, 800, 1000, 0.05, false, 'main');
-saveTokenUsage('5586695492', 'sess2', 2000, 1000, 1600, 2000, 0.10, false, 'ops');
-saveTokenUsage('5586695492', 'sess3', 500, 250, 400, 500, 0.02, false, 'research');
+saveTokenUsage('1234567890', 'sess1', 1000, 500, 800, 1000, 0.05, false, 'main');
+saveTokenUsage('1234567890', 'sess2', 2000, 1000, 1600, 2000, 0.10, false, 'ops');
+saveTokenUsage('1234567890', 'sess3', 500, 250, 400, 500, 0.02, false, 'research');
 
 const mainStats = getAgentTokenStats('main');
 const opsStats = getAgentTokenStats('ops');
@@ -65,9 +65,9 @@ assert('Stats isolated (main != ops cost)', mainStats.todayCost !== opsStats.tod
 
 // Test 4: Hive mind
 console.log('\n--- TEST 4: Hive mind ---');
-logToHiveMind('ops', '5586695492', 'scheduled_meeting', 'Booked call with John for Thu 2pm');
-logToHiveMind('research', '5586695492', 'deep_research', 'Analyzed competitor pricing');
-logToHiveMind('ops', '5586695492', 'sent_invoice', 'Invoice #42 to Acme Corp');
+logToHiveMind('ops', '1234567890', 'scheduled_meeting', 'Booked call with John for Thu 2pm');
+logToHiveMind('research', '1234567890', 'deep_research', 'Analyzed competitor pricing');
+logToHiveMind('ops', '1234567890', 'sent_invoice', 'Invoice #42 to Acme Corp');
 
 const allHive = getHiveMindEntries(10);
 const opsHive = getHiveMindEntries(10, 'ops');
@@ -78,9 +78,9 @@ assert('Ops hive all have ops agent_id', opsHive.every((e: any) => e.agent_id ==
 
 // Test 5: Conversation log
 console.log('\n--- TEST 5: Conversation log ---');
-logConversationTurn('5586695492', 'user', 'check my calendar', 'sess1', 'ops');
-logConversationTurn('5586695492', 'assistant', 'Here is your calendar...', 'sess1', 'ops');
-logConversationTurn('5586695492', 'user', 'research AI trends', 'sess2', 'research');
+logConversationTurn('1234567890', 'user', 'check my calendar', 'sess1', 'ops');
+logConversationTurn('1234567890', 'assistant', 'Here is your calendar...', 'sess1', 'ops');
+logConversationTurn('1234567890', 'user', 'research AI trends', 'sess2', 'research');
 assert('Conversation logged without error', true);
 
 // Test 6: Backwards compat

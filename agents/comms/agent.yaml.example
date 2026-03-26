@@ -1,5 +1,5 @@
 name: Comms
-description: All human communication -- email, Slack, WhatsApp, YouTube comments, Skool inbox, LinkedIn DMs
+description: All human communication -- email, Slack, WhatsApp, YouTube comments, community forums, LinkedIn DMs
 
 telegram_bot_token_env: COMMS_BOT_TOKEN
 
@@ -8,7 +8,7 @@ model: claude-sonnet-4-6
 obsidian:
   vault: /path/to/your/obsidian/vault
   folders:
-    - Prompt Advisers/
+    - Projects/
     - Inbox/
   read_only:
     - Daily Notes/

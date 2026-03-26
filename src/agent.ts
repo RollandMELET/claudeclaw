@@ -63,8 +63,6 @@ export interface AgentResult {
   newSessionId: string | undefined;
   usage: UsageInfo | null;
   aborted?: boolean;
-  /** True if the SDK reported an authentication failure (expired OAuth token, etc.) */
-  authError?: boolean;
 }
 
 /**
@@ -110,6 +108,7 @@ export async function runAgent(
   onProgress?: (event: AgentProgressEvent) => void,
   model?: string,
   abortController?: AbortController,
+  onStreamText?: (accumulatedText: string) => void,
 ): Promise<AgentResult> {
   // Read secrets from .env without polluting process.env.
   // CLAUDE_CODE_OAUTH_TOKEN is optional — the subprocess finds auth via ~/.claude/
@@ -131,7 +130,7 @@ export async function runAgent(
   let preCompactTokens: number | null = null;
   let lastCallCacheRead = 0;
   let lastCallInputTokens = 0;
-  let authError = false;
+  let streamedText = '';
 
   // Refresh typing indicator on an interval while Claude works.
   // Telegram's "typing..." action expires after ~5s.
@@ -163,6 +162,9 @@ export async function runAgent(
         // Pass secrets to the subprocess without polluting our own process.env
         env: sdkEnv,
 
+        // Stream partial text so Telegram can show progressive updates
+        includePartialMessages: !!onStreamText,
+
         // Model override (e.g. 'claude-haiku-4-5', 'claude-sonnet-4-5')
         ...(model ? { model } : {}),
 
@@ -177,16 +179,6 @@ export async function runAgent(
         logger.info({ newSessionId }, 'Session initialized');
       }
 
-      // Detect authentication failures from SDK
-      if (ev['type'] === 'auth_status' && ev['error']) {
-        authError = true;
-        logger.error({ authError: ev['error'], output: ev['output'] }, 'Authentication failed');
-      }
-      if (ev['type'] === 'assistant' && ev['error'] === 'authentication_failed') {
-        authError = true;
-        logger.error({ error: ev['error'] }, 'API authentication failed');
-      }
-
       // Detect auto-compaction (context window was getting full)
       if (ev['type'] === 'system' && ev['subtype'] === 'compact_boundary') {
         didCompact = true;
@@ -198,11 +190,12 @@ export async function runAgent(
         );
       }
 
-      // Track per-call token usage from assistant message events.
+      // Track per-call token usage and detect tool use from assistant message events.
       // Each assistant message represents one API call; its usage reflects
       // that single call's context size (not cumulative across the turn).
       if (ev['type'] === 'assistant') {
-        const msgUsage = (ev['message'] as Record<string, unknown>)?.['usage'] as Record<string, number> | undefined;
+        const msg = ev['message'] as Record<string, unknown> | undefined;
+        const msgUsage = msg?.['usage'] as Record<string, number> | undefined;
         const callCacheRead = msgUsage?.['cache_read_input_tokens'] ?? 0;
         const callInputTokens = msgUsage?.['input_tokens'] ?? 0;
         if (callCacheRead > 0) {
@@ -211,12 +204,18 @@ export async function runAgent(
         if (callInputTokens > 0) {
           lastCallInputTokens = callInputTokens;
         }
-      }
 
-      // Tool progress events — surface to dashboard (not Telegram to avoid spam)
-      if (ev['type'] === 'tool_progress' && onProgress) {
-        const name = (ev['tool_name'] as string) ?? 'unknown';
-        onProgress({ type: 'tool_active', description: toolLabel(name) });
+        // Extract tool_use blocks from assistant content for progress reporting
+        if (onProgress) {
+          const content = msg?.['content'] as Array<{ type: string; name?: string }> | undefined;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === 'tool_use' && block.name) {
+                onProgress({ type: 'tool_active', description: toolLabel(block.name) });
+              }
+            }
+          }
+        }
       }
 
       // Sub-agent lifecycle events — surface to Telegram for user feedback
@@ -231,6 +230,23 @@ export async function runAgent(
           type: 'task_completed',
           description: status === 'failed' ? `Failed: ${summary}` : summary,
         });
+      }
+
+      // Stream text deltas for progressive Telegram updates.
+      // Only stream the outermost assistant response (parent_tool_use_id === null)
+      // to avoid showing internal tool-use reasoning.
+      if (ev['type'] === 'stream_event' && onStreamText && ev['parent_tool_use_id'] === null) {
+        const streamEvent = ev['event'] as Record<string, unknown> | undefined;
+        if (streamEvent?.['type'] === 'content_block_delta') {
+          const delta = streamEvent['delta'] as Record<string, unknown> | undefined;
+          if (delta?.['type'] === 'text_delta' && typeof delta['text'] === 'string') {
+            streamedText += delta['text'];
+            onStreamText(streamedText);
+          }
+        }
+        if (streamEvent?.['type'] === 'message_start') {
+          streamedText = '';
+        }
       }
 
       if (ev['type'] === 'result') {
@@ -273,19 +289,10 @@ export async function runAgent(
       logger.info('Agent query aborted by user');
       return { text: null, newSessionId, usage, aborted: true };
     }
-    // Enrich error with auth flag and partial result text (helps diagnose auth vs context)
-    if (err instanceof Error) {
-      if (authError || resultText?.toLowerCase().includes('authenticate') || resultText?.toLowerCase().includes('401')) {
-        err.message += ' [auth_failure]';
-      }
-      if (resultText) {
-        err.message += ` | Last response: ${resultText.slice(0, 200)}`;
-      }
-    }
     throw err;
   } finally {
     clearInterval(typingInterval);
   }
 
-  return { text: resultText, newSessionId, usage, authError };
+  return { text: resultText, newSessionId, usage };
 }

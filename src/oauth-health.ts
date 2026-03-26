@@ -15,7 +15,7 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 /** Alert when token expires within this window */
 const ALERT_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-/** Don't spam — track last alert level to avoid repeating */
+/** Don't spam - track last alert level to avoid repeating */
 let lastAlertLevel: 'none' | 'warning' | 'expired' = 'none';
 
 interface Credentials {
@@ -70,8 +70,8 @@ async function checkOAuthHealth(sender: Sender): Promise<void> {
       lastAlertLevel = 'expired';
       logger.error({ expiresAt, remainingMs }, 'OAuth token EXPIRED');
       await sender(
-        '<b>OAuth Health Check — TOKEN EXPIRÉ</b>\n\n' +
-        `Le token OAuth a expiré il y a ${Math.abs(remainingMinutes)} minutes.\n` +
+        '<b>OAuth Health Check - TOKEN EXPIRE</b>\n\n' +
+        `Le token OAuth a expire il y a ${Math.abs(remainingMinutes)} minutes.\n` +
         'RC1/RC2 vont crasher au prochain appel API.\n\n' +
         '<b>Action requise :</b>\n' +
         '<code>ssh macmini "claude auth logout && claude auth login --email rm@360sc.io"</code>',
@@ -83,14 +83,14 @@ async function checkOAuthHealth(sender: Sender): Promise<void> {
       lastAlertLevel = 'warning';
       logger.warn({ expiresAt, remainingHours, remainingMinutes }, 'OAuth token expiring soon');
       await sender(
-        '<b>OAuth Health Check — Expiration proche</b>\n\n' +
+        '<b>OAuth Health Check - Expiration proche</b>\n\n' +
         `Le token OAuth expire dans <b>${remainingHours}h${remainingMinutes}min</b>.\n\n` +
-        '<b>Action recommandée :</b>\n' +
+        '<b>Action recommandee :</b>\n' +
         '<code>ssh macmini "claude auth logout && claude auth login --email rm@360sc.io"</code>',
       );
     }
   } else {
-    // Token healthy — reset alert state
+    // Token healthy - reset alert state
     if (lastAlertLevel !== 'none') {
       lastAlertLevel = 'none';
       logger.info({ remainingHours }, 'OAuth token healthy again');

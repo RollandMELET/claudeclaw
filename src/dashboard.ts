@@ -1,13 +1,13 @@
 import { Api, RawApi } from 'grammy';
 import { Hono } from 'hono';
-import { streamSSE } from 'hono/streaming';
 import { getCookie, setCookie } from 'hono/cookie';
+import { streamSSE } from 'hono/streaming';
 import { serve } from '@hono/node-server';
-import crypto from 'crypto';
 
 import fs from 'fs';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_USER, DASHBOARD_PASSWORD, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_USER, DASHBOARD_PASSWORD, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import crypto from 'crypto';
 import {
   getAllScheduledTasks,
   deleteScheduledTask,
@@ -15,24 +15,109 @@ import {
   resumeScheduledTask,
   getConversationPage,
   getDashboardMemoryStats,
+  getDashboardPinnedMemories,
   getDashboardLowSalienceMemories,
   getDashboardTopAccessedMemories,
   getDashboardMemoryTimeline,
+  getDashboardConsolidations,
+  getDashboardMemoriesList,
   getDashboardTokenStats,
   getDashboardCostTimeline,
   getDashboardRecentTokenUsage,
-  getDashboardMemoriesBySector,
   getSession,
   getSessionTokenUsage,
   getHiveMindEntries,
   getAgentTokenStats,
   getAgentRecentConversation,
+  getMissionTasks,
+  getMissionTask,
+  createMissionTask,
+  cancelMissionTask,
+  deleteMissionTask,
+  reassignMissionTask,
+  assignMissionTask,
+  getUnassignedMissionTasks,
+  getMissionTaskHistory,
+  getAuditLog,
+  getAuditLogCount,
+  getRecentBlockedActions,
 } from './db.js';
-import { listAgentIds, loadAgentConfig } from './agent-config.js';
+import { generateContent, parseJsonResponse } from './gemini.js';
+import { getSecurityStatus } from './security.js';
+import { listAgentIds, loadAgentConfig, setAgentModel } from './agent-config.js';
+import {
+  listTemplates,
+  validateAgentId,
+  validateBotToken,
+  createAgent,
+  activateAgent,
+  deactivateAgent,
+  deleteAgent,
+  suggestBotNames,
+  isAgentRunning,
+} from './agent-create.js';
 import { processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
+
+async function classifyTaskAgent(prompt: string): Promise<string | null> {
+  try {
+    const agentIds = listAgentIds();
+    const agentDescriptions = agentIds.map((id) => {
+      try {
+        const config = loadAgentConfig(id);
+        return `- ${id}: ${config.description}`;
+      } catch { return `- ${id}: (no description)`; }
+    });
+
+    const classificationPrompt = `Given these agents and their roles:
+- main: Primary assistant, general tasks, anything that doesn't clearly fit another agent
+${agentDescriptions.join('\n')}
+
+Which ONE agent is best suited for this task?
+Task: "${prompt.slice(0, 500)}"
+
+Reply with JSON: {"agent": "agent_id"}`;
+
+    const response = await generateContent(classificationPrompt);
+    const parsed = parseJsonResponse<{ agent: string }>(response);
+    if (parsed?.agent) {
+      const validAgents = ['main', ...agentIds];
+      if (validAgents.includes(parsed.agent)) return parsed.agent;
+    }
+    return 'main'; // fallback
+  } catch (err) {
+    logger.error({ err }, 'Auto-assign classification failed');
+    return null;
+  }
+}
+
+// ── Cookie-based session auth ────────────────────────────────────────────────
+
+const sessionSecret = crypto.randomBytes(32);
+
+function makeSessionToken(user: string): string {
+  const payload = `${user}:${Date.now()}`;
+  const hmac = crypto.createHmac('sha256', sessionSecret).update(payload).digest('hex');
+  return `${Buffer.from(payload).toString('base64')}.${hmac}`;
+}
+
+function verifySessionToken(token: string): boolean {
+  const dotIdx = token.indexOf('.');
+  if (dotIdx < 0) return false;
+  const payloadB64 = token.slice(0, dotIdx);
+  const sig = token.slice(dotIdx + 1);
+  try {
+    const payload = Buffer.from(payloadB64, 'base64').toString('utf-8');
+    const expected = crypto.createHmac('sha256', sessionSecret).update(payload).digest('hex');
+    return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+const LOGIN_ENABLED = !!(DASHBOARD_USER && DASHBOARD_PASSWORD);
 
 export function startDashboard(botApi?: Api<RawApi>): void {
   if (!DASHBOARD_TOKEN) {
@@ -45,7 +130,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // CORS headers for cross-origin access (Cloudflare tunnel, mobile browsers)
   app.use('*', async (c, next) => {
     c.header('Access-Control-Allow-Origin', '*');
-    c.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    c.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, PATCH, OPTIONS');
     c.header('Access-Control-Allow-Headers', 'Content-Type');
     if (c.req.method === 'OPTIONS') return c.body(null, 204);
     await next();
@@ -57,90 +142,97 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Session secret derived from dashboard token (stable across restarts)
-  const sessionSecret = crypto.createHash('sha256').update(DASHBOARD_TOKEN + ':session').digest('hex');
-
-  function makeSessionToken(): string {
-    const payload = `${DASHBOARD_USER}:${Date.now()}`;
-    const sig = crypto.createHmac('sha256', sessionSecret).update(payload).digest('hex');
-    return `${Buffer.from(payload).toString('base64')}.${sig}`;
-  }
-
-  function verifySessionToken(token: string): boolean {
-    const [b64, sig] = token.split('.');
-    if (!b64 || !sig) return false;
-    const expected = crypto.createHmac('sha256', sessionSecret).update(Buffer.from(b64, 'base64').toString()).digest('hex');
-    return sig === expected;
-  }
-
-  // Login page HTML
-  const loginPageHtml = (error = '') => `<!DOCTYPE html>
+  // ── Login routes (before auth middleware) ──────────────────────────
+  if (LOGIN_ENABLED) {
+    app.get('/login', (c) => {
+      return c.html(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ClaudeClaw — Login</title>
+<title>ClaudeClaw Login</title>
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-  .login-box { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 2rem; width: 320px; }
-  h1 { font-size: 1.3rem; margin: 0 0 1.5rem; text-align: center; }
-  label { display: block; font-size: 0.85rem; color: #999; margin-bottom: 0.3rem; }
-  input { width: 100%; padding: 0.6rem; background: #0a0a0a; border: 1px solid #444; border-radius: 6px; color: #e0e0e0; font-size: 0.95rem; margin-bottom: 1rem; box-sizing: border-box; }
-  button { width: 100%; padding: 0.7rem; background: #2563eb; border: none; border-radius: 6px; color: white; font-size: 1rem; cursor: pointer; }
-  button:hover { background: #1d4ed8; }
-  .error { color: #ef4444; font-size: 0.85rem; text-align: center; margin-bottom: 1rem; }
+  body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .card{background:#1e293b;padding:2rem;border-radius:12px;width:320px;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+  h1{margin:0 0 1.5rem;font-size:1.4rem;text-align:center}
+  label{display:block;margin-bottom:.5rem;font-size:.9rem;color:#94a3b8}
+  input{width:100%;padding:.6rem;margin-bottom:1rem;border:1px solid #334155;border-radius:6px;background:#0f172a;color:#e2e8f0;font-size:1rem;box-sizing:border-box}
+  button{width:100%;padding:.7rem;border:none;border-radius:6px;background:#3b82f6;color:#fff;font-size:1rem;cursor:pointer}
+  button:hover{background:#2563eb}
+  .err{color:#f87171;font-size:.85rem;margin-bottom:.5rem;display:none}
 </style></head><body>
-<div class="login-box">
-  <h1>ClaudeClaw Dashboard</h1>
-  ${error ? `<div class="error">${error}</div>` : ''}
+<div class="card">
+  <h1>ClaudeClaw</h1>
   <form method="POST" action="/login">
-    <label>Utilisateur</label><input name="username" type="text" autofocus required>
-    <label>Mot de passe</label><input name="password" type="password" required>
-    <input type="hidden" name="token" value="">
-    <button type="submit">Connexion</button>
+    <div class="err" id="err"></div>
+    <label for="user">Username</label>
+    <input type="text" id="user" name="user" required autofocus>
+    <label for="pass">Password</label>
+    <input type="password" id="pass" name="pass" required>
+    <button type="submit">Sign in</button>
   </form>
-  <script>document.querySelector('input[name=token]').value=new URLSearchParams(location.search).get('token')||'';</script>
-</div></body></html>`;
-
-  // Login POST handler
-  app.post('/login', async (c) => {
-    const body = await c.req.parseBody();
-    const username = String(body['username'] || '');
-    const password = String(body['password'] || '');
-    const token = String(body['token'] || '');
-
-    if (!token || token !== DASHBOARD_TOKEN) {
-      return c.html(loginPageHtml('Token invalide'), 401);
-    }
-    if (!DASHBOARD_USER || !DASHBOARD_PASSWORD || username !== DASHBOARD_USER || password !== DASHBOARD_PASSWORD) {
-      return c.html(loginPageHtml('Identifiants incorrects'), 401);
-    }
-
-    setCookie(c, 'claw_session', makeSessionToken(), {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'Lax',
-      maxAge: 7 * 24 * 3600, // 7 days
-      path: '/',
+</div></body></html>`);
     });
 
-    return c.redirect(`/?token=${encodeURIComponent(token)}`);
-  });
+    app.post('/login', async (c) => {
+      const body = await c.req.parseBody();
+      const user = typeof body.user === 'string' ? body.user : '';
+      const pass = typeof body.pass === 'string' ? body.pass : '';
 
-  // Auth middleware: token required + session cookie (if user/password configured)
+      if (user === DASHBOARD_USER && pass === DASHBOARD_PASSWORD) {
+        const token = makeSessionToken(user);
+        setCookie(c, 'claw_session', token, {
+          path: '/',
+          httpOnly: true,
+          sameSite: 'Lax',
+          maxAge: 7 * 24 * 60 * 60, // 7 days
+        });
+        return c.redirect(`/?token=${encodeURIComponent(DASHBOARD_TOKEN)}`);
+      }
+
+      return c.html(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClaudeClaw Login</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .card{background:#1e293b;padding:2rem;border-radius:12px;width:320px;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+  h1{margin:0 0 1.5rem;font-size:1.4rem;text-align:center}
+  label{display:block;margin-bottom:.5rem;font-size:.9rem;color:#94a3b8}
+  input{width:100%;padding:.6rem;margin-bottom:1rem;border:1px solid #334155;border-radius:6px;background:#0f172a;color:#e2e8f0;font-size:1rem;box-sizing:border-box}
+  button{width:100%;padding:.7rem;border:none;border-radius:6px;background:#3b82f6;color:#fff;font-size:1rem;cursor:pointer}
+  button:hover{background:#2563eb}
+  .err{color:#f87171;font-size:.85rem;margin-bottom:.5rem}
+</style></head><body>
+<div class="card">
+  <h1>ClaudeClaw</h1>
+  <form method="POST" action="/login">
+    <div class="err">Invalid username or password</div>
+    <label for="user">Username</label>
+    <input type="text" id="user" name="user" required autofocus>
+    <label for="pass">Password</label>
+    <input type="password" id="pass" name="pass" required>
+    <button type="submit">Sign in</button>
+  </form>
+</div></body></html>`, 401);
+    });
+  }
+
+  // Token + session cookie auth middleware
   app.use('*', async (c, next) => {
-    // Always require token
+    // Allow token-based auth (existing behavior)
     const token = c.req.query('token');
-    if (!DASHBOARD_TOKEN || !token || token !== DASHBOARD_TOKEN) {
-      return c.json({ error: 'Unauthorized' }, 401);
+    if (DASHBOARD_TOKEN && token && token === DASHBOARD_TOKEN) {
+      await next();
+      return;
     }
 
-    // If user/password auth is configured, also require valid session cookie
-    if (DASHBOARD_USER && DASHBOARD_PASSWORD) {
-      const session = getCookie(c, 'claw_session');
-      if (!session || !verifySessionToken(session)) {
-        return c.html(loginPageHtml(), 200);
+    // Allow session cookie auth (when login is enabled)
+    if (LOGIN_ENABLED) {
+      const sessionCookie = getCookie(c, 'claw_session');
+      if (sessionCookie && verifySessionToken(sessionCookie)) {
+        await next();
+        return;
       }
     }
 
-    await next();
+    return c.json({ error: 'Unauthorized' }, 401);
   });
 
   // Serve dashboard HTML
@@ -176,6 +268,111 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ ok: true });
   });
 
+  // ── Mission Control endpoints ────────────────────────────────────────
+
+  app.get('/api/mission/tasks', (c) => {
+    const agentId = c.req.query('agent') || undefined;
+    const status = c.req.query('status') || undefined;
+    const tasks = getMissionTasks(agentId, status);
+    return c.json({ tasks });
+  });
+
+  app.get('/api/mission/tasks/:id', (c) => {
+    const id = c.req.param('id');
+    const task = getMissionTask(id);
+    if (!task) return c.json({ error: 'Not found' }, 404);
+    return c.json({ task });
+  });
+
+  app.post('/api/mission/tasks', async (c) => {
+    const body = await c.req.json<{
+      title?: string;
+      prompt?: string;
+      assigned_agent?: string;
+      priority?: number;
+    }>();
+
+    const title = body?.title?.trim();
+    const prompt = body?.prompt?.trim();
+    const assignedAgent = body?.assigned_agent?.trim() || null;
+    const priority = Math.max(0, Math.min(10, body?.priority ?? 0));
+
+    if (!title || title.length > 200) return c.json({ error: 'title required (max 200 chars)' }, 400);
+    if (!prompt || prompt.length > 10000) return c.json({ error: 'prompt required (max 10000 chars)' }, 400);
+
+    // Validate agent if provided
+    if (assignedAgent) {
+      const validAgents = ['main', ...listAgentIds()];
+      if (!validAgents.includes(assignedAgent)) {
+        return c.json({ error: `Unknown agent: ${assignedAgent}. Valid: ${validAgents.join(', ')}` }, 400);
+      }
+    }
+
+    const id = crypto.randomBytes(4).toString('hex');
+    createMissionTask(id, title, prompt, assignedAgent, 'dashboard', priority);
+
+    const task = getMissionTask(id);
+    return c.json({ task }, 201);
+  });
+
+  app.post('/api/mission/tasks/:id/cancel', (c) => {
+    const id = c.req.param('id');
+    const ok = cancelMissionTask(id);
+    return c.json({ ok });
+  });
+
+  // Auto-assign a single task via Gemini classification
+  app.post('/api/mission/tasks/:id/auto-assign', async (c) => {
+    const id = c.req.param('id');
+    const task = getMissionTask(id);
+    if (!task) return c.json({ error: 'Not found' }, 404);
+    if (task.assigned_agent) return c.json({ error: 'Already assigned' }, 400);
+
+    const agent = await classifyTaskAgent(task.prompt);
+    if (!agent) return c.json({ error: 'Classification failed' }, 500);
+
+    assignMissionTask(id, agent);
+    return c.json({ ok: true, assigned_agent: agent });
+  });
+
+  // Auto-assign all unassigned tasks
+  app.post('/api/mission/tasks/auto-assign-all', async (c) => {
+    const tasks = getUnassignedMissionTasks();
+    if (tasks.length === 0) return c.json({ assigned: 0 });
+
+    const results: Array<{ id: string; agent: string }> = [];
+    for (const task of tasks) {
+      const agent = await classifyTaskAgent(task.prompt);
+      if (agent && assignMissionTask(task.id, agent)) {
+        results.push({ id: task.id, agent });
+      }
+    }
+    return c.json({ assigned: results.length, results });
+  });
+
+  app.patch('/api/mission/tasks/:id', async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req.json<{ assigned_agent?: string }>();
+    const newAgent = body?.assigned_agent?.trim();
+    if (!newAgent) return c.json({ error: 'assigned_agent required' }, 400);
+    const validAgents = ['main', ...listAgentIds()];
+    if (!validAgents.includes(newAgent)) return c.json({ error: 'Unknown agent' }, 400);
+    const ok = reassignMissionTask(id, newAgent);
+    return c.json({ ok });
+  });
+
+  app.delete('/api/mission/tasks/:id', (c) => {
+    const id = c.req.param('id');
+    const ok = deleteMissionTask(id);
+    return c.json({ ok });
+  });
+
+  app.get('/api/mission/history', (c) => {
+    const limit = parseInt(c.req.query('limit') || '30', 10);
+    const offset = parseInt(c.req.query('offset') || '0', 10);
+    return c.json(getMissionTaskHistory(limit, offset));
+  });
+
   // Memory stats
   app.get('/api/memories', (c) => {
     const chatId = c.req.query('chatId') || '';
@@ -183,16 +380,23 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const fading = getDashboardLowSalienceMemories(chatId, 10);
     const topAccessed = getDashboardTopAccessedMemories(chatId, 5);
     const timeline = getDashboardMemoryTimeline(chatId, 30);
-    return c.json({ stats, fading, topAccessed, timeline });
+    const consolidations = getDashboardConsolidations(chatId, 5);
+    return c.json({ stats, fading, topAccessed, timeline, consolidations });
   });
 
-  // Memory list by sector (for drill-down)
+  // Memory list (for drill-down drawer)
+  app.get('/api/memories/pinned', (c) => {
+    const chatId = c.req.query('chatId') || '';
+    const memories = getDashboardPinnedMemories(chatId);
+    return c.json({ memories });
+  });
+
   app.get('/api/memories/list', (c) => {
     const chatId = c.req.query('chatId') || '';
-    const sector = c.req.query('sector') || 'semantic';
     const limit = parseInt(c.req.query('limit') || '50', 10);
     const offset = parseInt(c.req.query('offset') || '0', 10);
-    const result = getDashboardMemoriesBySector(chatId, sector, limit, offset);
+    const sortBy = (c.req.query('sort') || 'importance') as 'importance' | 'salience' | 'recent';
+    const result = getDashboardMemoriesList(chatId, limit, offset, sortBy);
     return c.json(result);
   });
 
@@ -224,6 +428,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       turns,
       compactions,
       sessionAge,
+      model: agentDefaultModel || 'sonnet-4-6',
       telegramConnected: getTelegramConnected(),
       waConnected: WHATSAPP_ENABLED,
       slackConnected: !!SLACK_USER_TOKEN,
@@ -324,6 +529,161 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const agentId = c.req.param('id');
     const stats = getAgentTokenStats(agentId);
     return c.json(stats);
+  });
+
+  // Update agent model
+  app.patch('/api/agents/:id/model', async (c) => {
+    const agentId = c.req.param('id');
+    const body = await c.req.json<{ model?: string }>();
+    const model = body?.model?.trim();
+    if (!model) return c.json({ error: 'model required' }, 400);
+
+    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    if (!validModels.includes(model)) return c.json({ error: `Invalid model. Valid: ${validModels.join(', ')}` }, 400);
+
+    try {
+      if (agentId === 'main') {
+        // Main agent uses in-memory override (same as /model command)
+        const { setMainModelOverride } = await import('./bot.js');
+        setMainModelOverride(model);
+      } else {
+        setAgentModel(agentId, model);
+      }
+      return c.json({ ok: true, agent: agentId, model });
+    } catch (err) {
+      return c.json({ error: 'Failed to update model' }, 500);
+    }
+  });
+
+  // Update ALL agent models at once
+  app.patch('/api/agents/model', async (c) => {
+    const body = await c.req.json<{ model?: string }>();
+    const model = body?.model?.trim();
+    if (!model) return c.json({ error: 'model required' }, 400);
+
+    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    if (!validModels.includes(model)) return c.json({ error: `Invalid model` }, 400);
+
+    const agentIds = listAgentIds();
+    const updated: string[] = [];
+    for (const id of agentIds) {
+      try { setAgentModel(id, model); updated.push(id); } catch {}
+    }
+    return c.json({ ok: true, model, updated });
+  });
+
+  // ── Agent Creation & Management ──────────────────────────────────────
+
+  // List available agent templates
+  app.get('/api/agents/templates', (c) => {
+    return c.json({ templates: listTemplates() });
+  });
+
+  // Validate an agent ID (before creation)
+  app.get('/api/agents/validate-id', (c) => {
+    const id = c.req.query('id') || '';
+    const result = validateAgentId(id);
+    const suggestions = id ? suggestBotNames(id) : null;
+    return c.json({ ...result, suggestions });
+  });
+
+  // Validate a bot token
+  app.post('/api/agents/validate-token', async (c) => {
+    const body = await c.req.json<{ token?: string }>();
+    const token = body?.token?.trim();
+    if (!token) return c.json({ ok: false, error: 'token required' }, 400);
+    const result = await validateBotToken(token);
+    return c.json(result);
+  });
+
+  // Create a new agent
+  app.post('/api/agents/create', async (c) => {
+    const body = await c.req.json<{
+      id?: string;
+      name?: string;
+      description?: string;
+      model?: string;
+      template?: string;
+      botToken?: string;
+    }>();
+
+    const id = body?.id?.trim();
+    const name = body?.name?.trim();
+    const description = body?.description?.trim();
+    const botToken = body?.botToken?.trim();
+
+    if (!id) return c.json({ error: 'id required' }, 400);
+    if (!name) return c.json({ error: 'name required' }, 400);
+    if (!description) return c.json({ error: 'description required' }, 400);
+    if (!botToken) return c.json({ error: 'botToken required' }, 400);
+
+    try {
+      const result = await createAgent({
+        id,
+        name,
+        description,
+        model: body?.model?.trim() || undefined,
+        template: body?.template?.trim() || undefined,
+        botToken,
+      });
+      return c.json({ ok: true, ...result }, 201);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: msg }, 400);
+    }
+  });
+
+  // Activate an agent (install service + start)
+  app.post('/api/agents/:id/activate', (c) => {
+    const agentId = c.req.param('id');
+    if (agentId === 'main') return c.json({ error: 'Cannot activate main via this endpoint' }, 400);
+    const result = activateAgent(agentId);
+    return c.json(result);
+  });
+
+  // Deactivate an agent (stop + uninstall service)
+  app.post('/api/agents/:id/deactivate', (c) => {
+    const agentId = c.req.param('id');
+    if (agentId === 'main') return c.json({ error: 'Cannot deactivate main via this endpoint' }, 400);
+    const result = deactivateAgent(agentId);
+    return c.json(result);
+  });
+
+  // Delete an agent entirely
+  app.delete('/api/agents/:id/full', (c) => {
+    const agentId = c.req.param('id');
+    if (agentId === 'main') return c.json({ error: 'Cannot delete main' }, 400);
+    const result = deleteAgent(agentId);
+    if (result.ok) {
+      return c.json({ ok: true });
+    }
+    return c.json({ error: result.error }, 500);
+  });
+
+  // Check if a specific agent is running
+  app.get('/api/agents/:id/status', (c) => {
+    const agentId = c.req.param('id');
+    return c.json({ running: isAgentRunning(agentId) });
+  });
+
+  // ── Security & Audit ─────────────────────────────────────────────────
+
+  app.get('/api/security/status', (c) => {
+    return c.json(getSecurityStatus());
+  });
+
+  app.get('/api/audit', (c) => {
+    const limit = parseInt(c.req.query('limit') || '50', 10);
+    const offset = parseInt(c.req.query('offset') || '0', 10);
+    const agentId = c.req.query('agent') || undefined;
+    const entries = getAuditLog(limit, offset, agentId);
+    const total = getAuditLogCount(agentId);
+    return c.json({ entries, total });
+  });
+
+  app.get('/api/audit/blocked', (c) => {
+    const limit = parseInt(c.req.query('limit') || '10', 10);
+    return c.json({ entries: getRecentBlockedActions(limit) });
   });
 
   // Hive mind feed

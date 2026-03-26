@@ -1,6 +1,6 @@
 import fs, { mkdirSync } from 'fs';
-import http from 'http';
 import https from 'https';
+import http from 'http';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -154,7 +154,7 @@ export async function downloadTelegramFile(
  * Transcribe an audio file using Groq's Whisper API.
  * Supports .ogg, .mp3, .wav, .m4a.
  */
-export async function transcribeAudio(filePath: string): Promise<string> {
+async function transcribeAudioGroq(filePath: string): Promise<string> {
   const env = readEnvFile(['GROQ_API_KEY']);
   const apiKey = env.GROQ_API_KEY;
   if (!apiKey) {
@@ -220,6 +220,59 @@ export async function transcribeAudio(filePath: string): Promise<string> {
   };
 
   return response.text ?? '';
+}
+
+// ── STT: whisper-cpp (local fallback) ────────────────────────────────────────
+
+/**
+ * Transcribe an audio file using local whisper-cpp binary.
+ * Converts to WAV first (whisper-cpp requires WAV input).
+ */
+async function transcribeAudioLocal(filePath: string): Promise<string> {
+  const env = readEnvFile(['WHISPER_CPP_PATH', 'WHISPER_MODEL_PATH']);
+  const whisperPath = env.WHISPER_CPP_PATH || 'whisper-cpp';
+  const modelPath = env.WHISPER_MODEL_PATH;
+  if (!modelPath) throw new Error('WHISPER_MODEL_PATH not set');
+
+  // whisper-cpp needs WAV input — convert from ogg/mp3/etc.
+  const wavPath = filePath.replace(/\.[^.]+$/, '.wav');
+  await execFileAsync('ffmpeg', ['-i', filePath, '-ar', '16000', '-ac', '1', '-y', wavPath]);
+
+  try {
+    const { stdout } = await execFileAsync(whisperPath, [
+      '-m', modelPath,
+      '-f', wavPath,
+      '--output-json',
+      '--no-timestamps',
+      '-l', 'auto',
+    ]);
+    const result = JSON.parse(stdout);
+    return (result.transcription || []).map((s: { text: string }) => s.text).join(' ').trim();
+  } finally {
+    try { fs.unlinkSync(wavPath); } catch { /* ignore */ }
+  }
+}
+
+// ── STT: Cascade (Groq → whisper-cpp local) ─────────────────────────────────
+
+/**
+ * Transcribe an audio file using the first available provider.
+ * Priority: Groq Whisper (cloud) → whisper-cpp (local).
+ */
+export async function transcribeAudio(filePath: string): Promise<string> {
+  const env = readEnvFile(['GROQ_API_KEY', 'WHISPER_MODEL_PATH']);
+
+  // Try Groq first (cloud, fast)
+  if (env.GROQ_API_KEY) {
+    try {
+      return await transcribeAudioGroq(filePath);
+    } catch (err) {
+      logger.warn({ err }, 'Groq Whisper failed, trying local whisper-cpp');
+    }
+  }
+
+  // Fallback: local whisper-cpp
+  return await transcribeAudioLocal(filePath);
 }
 
 // ── TTS: ElevenLabs (primary) ────────────────────────────────────────────────
@@ -294,11 +347,11 @@ async function synthesizeSpeechGradium(text: string): Promise<Buffer> {
   );
 }
 
-// ── TTS: Kokoro (local Docker, OpenAI-compatible) ────────────────────────────
+// -- TTS: Kokoro (local Docker, OpenAI-compatible) ------------------------------------
 
 /**
  * Convert text to speech using Kokoro TTS (local Docker container).
- * API is OpenAI-compatible. Returns OGG Opus via ffmpeg conversion.
+ * API is OpenAI-compatible. Returns OGG Opus audio.
  */
 async function synthesizeSpeechKokoro(text: string): Promise<Buffer> {
   const env = readEnvFile(['KOKORO_URL']);
@@ -379,11 +432,11 @@ export async function synthesizeSpeechLocal(text: string): Promise<Buffer> {
   }
 }
 
-// ── TTS: Cascade (Gradium → Kokoro → ElevenLabs → macOS say) ────────────────
+// ── TTS: Cascade (ElevenLabs → Gradium → macOS say) ─────────────────────────
 
 /**
  * Convert text to speech using the first available provider.
- * Priority: Gradium AI → Kokoro (local) → ElevenLabs → macOS say + ffmpeg.
+ * Priority: ElevenLabs → Gradium AI → macOS say + ffmpeg.
  */
 export async function synthesizeSpeech(text: string): Promise<Buffer> {
   const env = readEnvFile([
@@ -392,30 +445,30 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
     'KOKORO_URL',
   ]);
 
-  const hasGradium = !!(env.GRADIUM_API_KEY && env.GRADIUM_VOICE_ID);
   const hasElevenLabs = !!(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID);
-
-  if (hasGradium) {
-    try {
-      return await synthesizeSpeechGradium(text);
-    } catch (err) {
-      logger.warn({ err }, 'Gradium TTS failed, trying Kokoro fallback');
-    }
-  }
-
-  // Kokoro is always attempted (local Docker, no API key needed)
-  try {
-    return await synthesizeSpeechKokoro(text);
-  } catch (err) {
-    logger.warn({ err }, 'Kokoro TTS failed, trying ElevenLabs fallback');
-  }
+  const hasGradium = !!(env.GRADIUM_API_KEY && env.GRADIUM_VOICE_ID);
 
   if (hasElevenLabs) {
     try {
       return await synthesizeSpeechElevenLabs(text);
     } catch (err) {
-      logger.warn({ err }, 'ElevenLabs TTS failed, trying local fallback');
+      logger.warn({ err }, 'ElevenLabs TTS failed, trying next provider');
     }
+  }
+
+  if (hasGradium) {
+    try {
+      return await synthesizeSpeechGradium(text);
+    } catch (err) {
+      logger.warn({ err }, 'Gradium TTS failed, trying local fallback');
+    }
+  }
+
+  // Kokoro - local Docker TTS (always available, no API key needed)
+  try {
+    return await synthesizeSpeechKokoro(text);
+  } catch (err) {
+    logger.warn({ err }, 'Kokoro TTS failed, trying local fallback');
   }
 
   return await synthesizeSpeechLocal(text);
@@ -430,15 +483,17 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
 export function voiceCapabilities(): { stt: boolean; tts: boolean } {
   const env = readEnvFile([
     'GROQ_API_KEY',
+    'WHISPER_MODEL_PATH',
     'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
     'GRADIUM_API_KEY', 'GRADIUM_VOICE_ID',
+    'KOKORO_URL',
   ]);
 
   return {
-    stt: !!env.GROQ_API_KEY,
-    // Kokoro is always available (local Docker, no key needed) — so tts is always true when macOS or Kokoro
+    stt: !!env.GROQ_API_KEY || !!env.WHISPER_MODEL_PATH,
     tts: !!(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID)
       || !!(env.GRADIUM_API_KEY && env.GRADIUM_VOICE_ID)
-      || true, // Kokoro local + macOS say fallback
+      || !!env.KOKORO_URL
+      || process.platform === 'darwin',
   };
 }

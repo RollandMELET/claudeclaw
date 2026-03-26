@@ -13,14 +13,24 @@ After completing any meaningful action, log it:
 sqlite3 store/claudeclaw.db "INSERT INTO hive_mind (agent_id, chat_id, action, summary, artifacts, created_at) VALUES ('research', '[CHAT_ID]', '[ACTION]', '[SUMMARY]', NULL, strftime('%s','now'));"
 ```
 
-## Règle TTS — Accents français
+## Scheduling Tasks
 
-Toujours écrire en français correct avec les accents (é, è, ê, à, ù, ç, œ).
-Un TTS sans accents produit une prononciation incorrecte.
+You can create scheduled tasks that run in YOUR agent process (not the main bot):
 
-## Contexte
+**IMPORTANT:** Use `git rev-parse --show-toplevel` to resolve the project root. **Never use `find`** to locate files.
 
-Recherche en français et anglais. Résultats en français par défaut.
+```bash
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+node "$PROJECT_ROOT/dist/schedule-cli.js" create "PROMPT" "CRON"
+```
+
+The agent ID is auto-detected from your environment. Tasks you create will fire from the research agent.
+
+```bash
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+node "$PROJECT_ROOT/dist/schedule-cli.js" list
+node "$PROJECT_ROOT/dist/schedule-cli.js" delete <id>
+```
 
 ## Style
 - Lead with the conclusion, then support with evidence.
