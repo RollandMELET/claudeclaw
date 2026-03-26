@@ -189,7 +189,7 @@ async function main(): Promise<void> {
       AGENT_ID,
     );
 
-    // Proactive OAuth health monitoring
+    // Proactive OAuth health monitoring - alerts before token expires
     initOAuthHealthCheck(async (text) => {
       const { splitMessage } = await import('./bot.js');
       for (const chunk of splitMessage(text)) {
