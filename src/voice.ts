@@ -1,5 +1,6 @@
 import fs, { mkdirSync } from 'fs';
 import https from 'https';
+import http from 'http';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -346,6 +347,52 @@ async function synthesizeSpeechGradium(text: string): Promise<Buffer> {
   );
 }
 
+// -- TTS: Kokoro (local Docker, OpenAI-compatible) ------------------------------------
+
+/**
+ * Convert text to speech using Kokoro TTS (local Docker container).
+ * API is OpenAI-compatible. Returns OGG Opus audio.
+ */
+async function synthesizeSpeechKokoro(text: string): Promise<Buffer> {
+  const env = readEnvFile(['KOKORO_URL']);
+  const baseUrl = env.KOKORO_URL || 'http://localhost:8880';
+
+  const payload = JSON.stringify({
+    model: 'kokoro',
+    input: text,
+    voice: 'ff_siwis',
+    response_format: 'opus',
+  });
+
+  const url = new URL('/v1/audio/speech', baseUrl);
+
+  return new Promise((resolve, reject) => {
+    const protocol = url.protocol === 'https:' ? https : http;
+    const req = protocol.request(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload).toString(),
+      },
+    }, (res: import('http').IncomingMessage) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`Kokoro HTTP ${res.statusCode}: ${buf.toString('utf-8').slice(0, 300)}`));
+          return;
+        }
+        resolve(buf);
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 // ── TTS: macOS say + ffmpeg (local fallback) ─────────────────────────────────
 
 /**
@@ -395,6 +442,7 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
   const env = readEnvFile([
     'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
     'GRADIUM_API_KEY', 'GRADIUM_VOICE_ID',
+    'KOKORO_URL',
   ]);
 
   const hasElevenLabs = !!(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID);
@@ -416,6 +464,13 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
     }
   }
 
+  // Kokoro - local Docker TTS (always available, no API key needed)
+  try {
+    return await synthesizeSpeechKokoro(text);
+  } catch (err) {
+    logger.warn({ err }, 'Kokoro TTS failed, trying local fallback');
+  }
+
   return await synthesizeSpeechLocal(text);
 }
 
@@ -431,12 +486,14 @@ export function voiceCapabilities(): { stt: boolean; tts: boolean } {
     'WHISPER_MODEL_PATH',
     'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
     'GRADIUM_API_KEY', 'GRADIUM_VOICE_ID',
+    'KOKORO_URL',
   ]);
 
   return {
     stt: !!env.GROQ_API_KEY || !!env.WHISPER_MODEL_PATH,
     tts: !!(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID)
       || !!(env.GRADIUM_API_KEY && env.GRADIUM_VOICE_ID)
+      || !!env.KOKORO_URL
       || process.platform === 'darwin',
   };
 }
