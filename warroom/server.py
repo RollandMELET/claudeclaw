@@ -1,29 +1,32 @@
 """
 War Room Voice Server for ClaudeClaw.
 
-Two modes, selected by the WARROOM_MODE environment variable:
+Three modes, selected by the WARROOM_MODE environment variable:
 
-  live   (default)   Gemini Live native-audio model + tool-calling.
+  live    (default)  Gemini Live native-audio model + tool-calling.
                      WebSocket → user aggregator → Gemini Live → assistant aggregator → WebSocket.
-                     Gemini handles speech-to-speech in real time. For execution work, it
-                     calls tools that hand off to sub-agents via mission-cli (async) or run
-                     inline (synchronous, fast answers like "what time is it").
+                     Gemini handles speech-to-speech in real time. ~500ms latency.
 
-  legacy             The original stitched STT → router → Claude-bridge → TTS chain.
-                     Higher latency, but every utterance goes through the full Claude Code
-                     stack with skills/MCP. Kept around so you can toggle back without
-                     reverting the file.
+  voxtral (fork)     STT=Groq Whisper + TTS=Voxtral MLX local. Uses the
+                     fork's existing TTS server on port 8881 for voice
+                     consistency with the Telegram bot. ~2-3s latency.
+
+  legacy             Original Deepgram + Cartesia stitched pipeline.
+                     Kept for fallback testing.
 
 Usage:
     python warroom/server.py
 
 Environment variables:
-    WARROOM_MODE         "live" (default) or "legacy"
+    WARROOM_MODE         "live" (default), "voxtral", or "legacy"
     WARROOM_PORT         port to listen on (default: 7860)
-    WARROOM_LIVE_MODEL   Gemini Live model id (default: whatever Pipecat ships)
-    WARROOM_LIVE_VOICE   Gemini Live voice name (default: "Charon")
+    WARROOM_LIVE_MODEL   Gemini Live model id (live mode)
+    WARROOM_LIVE_VOICE   Gemini Live voice name (live mode, default: "Charon")
 
     GOOGLE_API_KEY       required for live mode
+    GROQ_API_KEY         required for voxtral mode
+    VOXTRAL_LOCAL_URL    voxtral TTS server (voxtral mode, default http://localhost:8881)
+    VOXTRAL_VOICE        voxtral voice id (voxtral mode, default "fr_male")
     DEEPGRAM_API_KEY     required for legacy mode
     CARTESIA_API_KEY     required for legacy mode
 """
@@ -662,37 +665,29 @@ async def run_live_mode():
 
 # ─── Mode 2: Legacy stitched pipeline ──────────────────────────────────────
 
-async def run_legacy_mode():
-    """Original Deepgram → router → Claude bridge → Cartesia pipeline."""
-    from pipecat.services.cartesia.tts import CartesiaTTSService
-    from pipecat.services.deepgram.stt import DeepgramSTTService
+async def run_legacy_mode_with_services(stt_service, tts_service, mode_name: str = "legacy"):
+    """
+    Build + run the STT→router→bridge→TTS pipeline with injected services.
+
+    Extracted from run_legacy_mode so voxtral_mode can swap Deepgram+Cartesia
+    for Groq+Voxtral without duplicating pipeline glue.
+    """
     from router import AgentRouter
     from agent_bridge import ClaudeAgentBridge
 
-    check_required_keys({
-        "DEEPGRAM_API_KEY": "Deepgram (speech-to-text)",
-        "CARTESIA_API_KEY": "Cartesia (text-to-speech)",
-    })
-
     port = int(os.environ.get("WARROOM_PORT", "7860"))
 
-    default_voice = AGENT_VOICES.get(DEFAULT_AGENT, {})
-    default_voice_id = default_voice.get("voice_id", "a0e99841-438c-4a64-b679-ae501e7d6091")
-
     transport = make_transport(port)
-
-    stt = DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])
-    tts = CartesiaTTSService(api_key=os.environ["CARTESIA_API_KEY"], voice_id=default_voice_id)
 
     router = AgentRouter()
     bridge = ClaudeAgentBridge()
 
     pipeline = Pipeline([
         transport.input(),
-        stt,
+        stt_service,
         router,
         bridge,
-        tts,
+        tts_service,
         transport.output(),
     ])
 
@@ -710,13 +705,32 @@ async def run_legacy_mode():
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        logger.info("Client connected (legacy mode)")
+        logger.info("Client connected (%s mode)", mode_name)
 
-    print_ready(port, "legacy")
+    print_ready(port, mode_name)
     runner = PipelineRunner(handle_sigterm=True)
-    logger.info("War Room LEGACY mode on ws://0.0.0.0:%d", port)
+    logger.info("War Room %s mode on ws://0.0.0.0:%d", mode_name.upper(), port)
     await runner.run(task)
     logger.info("War Room session ended.")
+
+
+async def run_legacy_mode():
+    """Original Deepgram → router → Claude bridge → Cartesia pipeline."""
+    from pipecat.services.cartesia.tts import CartesiaTTSService
+    from pipecat.services.deepgram.stt import DeepgramSTTService
+
+    check_required_keys({
+        "DEEPGRAM_API_KEY": "Deepgram (speech-to-text)",
+        "CARTESIA_API_KEY": "Cartesia (text-to-speech)",
+    })
+
+    default_voice = AGENT_VOICES.get(DEFAULT_AGENT, {})
+    default_voice_id = default_voice.get("voice_id", "a0e99841-438c-4a64-b679-ae501e7d6091")
+
+    stt = DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])
+    tts = CartesiaTTSService(api_key=os.environ["CARTESIA_API_KEY"], voice_id=default_voice_id)
+
+    await run_legacy_mode_with_services(stt, tts, mode_name="legacy")
 
 
 # ─── Entry point ───────────────────────────────────────────────────────────
@@ -728,9 +742,14 @@ async def run_warroom():
         await run_legacy_mode()
     elif mode == "live":
         await run_live_mode()
+    elif mode == "voxtral":
+        # Fork-specific: Groq STT + Voxtral MLX local TTS.
+        # Reuses the same Telegram bot's voice for meeting consistency.
+        from voxtral_mode import run_voxtral_mode
+        await run_voxtral_mode()
     else:
         logger.error(
-            "Unknown WARROOM_MODE=%r. Expected 'live' or 'legacy'. Defaulting to 'live'.",
+            "Unknown WARROOM_MODE=%r. Expected 'live', 'voxtral', or 'legacy'. Defaulting to 'live'.",
             mode,
         )
         await run_live_mode()
