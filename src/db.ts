@@ -278,6 +278,63 @@ function createSchema(database: Database.Database): void {
       INSERT INTO memories_fts(rowid, summary, raw_text, entities, topics)
         VALUES (new.id, new.summary, new.raw_text, new.entities, new.topics);
     END;
+
+    -- ── ccos phase 0 — war room + meet-cli + skill health ─────────────
+
+    CREATE TABLE IF NOT EXISTS meet_sessions (
+      id          TEXT PRIMARY KEY NOT NULL,
+      agent_id    TEXT NOT NULL,
+      meet_url    TEXT,
+      platform    TEXT NOT NULL DEFAULT 'google_meet',
+      provider    TEXT NOT NULL DEFAULT 'pika',
+      status      TEXT NOT NULL DEFAULT 'joining',
+      voice_id    TEXT,
+      image_path  TEXT,
+      brief_path  TEXT,
+      created_at  INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_meet_sessions_agent ON meet_sessions(agent_id, status);
+
+    CREATE TABLE IF NOT EXISTS warroom_meetings (
+      id            TEXT PRIMARY KEY NOT NULL,
+      started_at    INTEGER NOT NULL,
+      ended_at      INTEGER,
+      duration_s    INTEGER,
+      mode          TEXT NOT NULL DEFAULT 'direct',
+      pinned_agent  TEXT NOT NULL DEFAULT 'main',
+      entry_count   INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_warroom_meetings_started ON warroom_meetings(started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS warroom_transcript (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id  TEXT NOT NULL,
+      speaker     TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      FOREIGN KEY (meeting_id) REFERENCES warroom_meetings(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_warroom_transcript_meeting ON warroom_transcript(meeting_id, id);
+
+    CREATE TABLE IF NOT EXISTS skill_health (
+      skill_id    TEXT PRIMARY KEY NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'unchecked',
+      error_msg   TEXT,
+      last_check  INTEGER,
+      created_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      skill_id      TEXT NOT NULL,
+      invocations   INTEGER NOT NULL DEFAULT 0,
+      last_invoked  INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_skill_usage_skill ON skill_usage(skill_id, last_invoked DESC);
   `);
 }
 
@@ -553,6 +610,11 @@ export function _initTestDatabase(): void {
   db.pragma('journal_mode = WAL');
   createSchema(db);
   runMigrations(db);
+}
+
+/** @internal - for tests only. Exposes raw DB handle for schema checks. */
+export function _testDb(): Database.Database {
+  return db;
 }
 
 export function getSession(chatId: string, agentId = 'main'): string | undefined {

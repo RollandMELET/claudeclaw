@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
+  _testDb,
   setSession,
   getSession,
   clearSession,
@@ -408,6 +409,185 @@ describe('database', () => {
       expect(timeline.length).toBeGreaterThanOrEqual(1);
       expect(timeline[0]).toHaveProperty('date');
       expect(timeline[0]).toHaveProperty('count');
+    });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// ccos phase 0 — new tables for war room + meet-cli + skill health
+// ────────────────────────────────────────────────────────────────────
+
+describe('ccos phase 0 tables', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  describe('meet_sessions', () => {
+    it('accepts INSERT with all fields and returns row via SELECT', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(`
+        INSERT INTO meet_sessions
+          (id, agent_id, meet_url, platform, provider, status, voice_id,
+           image_path, brief_path, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'ms-1', 'research', 'https://meet.google.com/abc',
+        'google_meet', 'recall', 'joining', 'voice-fr',
+        '/tmp/avatar.png', '/tmp/brief.md', now,
+      );
+      const row = db
+        .prepare('SELECT * FROM meet_sessions WHERE id = ?')
+        .get('ms-1') as Record<string, unknown>;
+      expect(row).toBeDefined();
+      expect(row.agent_id).toBe('research');
+      expect(row.meet_url).toBe('https://meet.google.com/abc');
+      expect(row.provider).toBe('recall');
+    });
+
+    it('applies defaults for platform, provider, status when omitted', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(
+        `INSERT INTO meet_sessions (id, agent_id, created_at) VALUES (?, ?, ?)`,
+      ).run('ms-2', 'main', now);
+      const row = db
+        .prepare('SELECT * FROM meet_sessions WHERE id = ?')
+        .get('ms-2') as Record<string, unknown>;
+      expect(row.platform).toBe('google_meet');
+      expect(row.provider).toBe('pika');
+      expect(row.status).toBe('joining');
+    });
+
+    it('rejects INSERT missing required id or agent_id', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      expect(() =>
+        db
+          .prepare(`INSERT INTO meet_sessions (agent_id, created_at) VALUES (?, ?)`)
+          .run('main', now),
+      ).toThrow();
+    });
+  });
+
+  describe('warroom_meetings', () => {
+    it('accepts INSERT and returns row via SELECT', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(`
+        INSERT INTO warroom_meetings
+          (id, started_at, ended_at, duration_s, mode, pinned_agent, entry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('wm-1', now, now + 900, 900, 'direct', 'research', 42);
+      const row = db
+        .prepare('SELECT * FROM warroom_meetings WHERE id = ?')
+        .get('wm-1') as Record<string, unknown>;
+      expect(row).toBeDefined();
+      expect(row.pinned_agent).toBe('research');
+      expect(row.duration_s).toBe(900);
+    });
+
+    it('applies defaults mode=direct, pinned_agent=main', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(
+        `INSERT INTO warroom_meetings (id, started_at) VALUES (?, ?)`,
+      ).run('wm-2', now);
+      const row = db
+        .prepare('SELECT * FROM warroom_meetings WHERE id = ?')
+        .get('wm-2') as Record<string, unknown>;
+      expect(row.mode).toBe('direct');
+      expect(row.pinned_agent).toBe('main');
+    });
+  });
+
+  describe('warroom_transcript', () => {
+    it('autoincrements id and stores entries per meeting', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(`INSERT INTO warroom_meetings (id, started_at) VALUES (?, ?)`).run(
+        'wm-1',
+        now,
+      );
+      db.prepare(
+        `INSERT INTO warroom_transcript (meeting_id, speaker, text, created_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run('wm-1', 'user', 'hello world', now);
+      db.prepare(
+        `INSERT INTO warroom_transcript (meeting_id, speaker, text, created_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run('wm-1', 'main', 'hi there', now + 1);
+      const rows = db
+        .prepare('SELECT * FROM warroom_transcript WHERE meeting_id = ? ORDER BY id')
+        .all('wm-1') as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[0].speaker).toBe('user');
+      expect(rows[1].speaker).toBe('main');
+      expect(rows[1].id).toBeGreaterThan(rows[0].id as number);
+    });
+
+    it('requires meeting_id (NOT NULL)', () => {
+      const db = _testDb();
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO warroom_transcript (speaker, text, created_at) VALUES (?, ?, ?)`,
+          )
+          .run('user', 'orphan', Math.floor(Date.now() / 1000)),
+      ).toThrow();
+    });
+  });
+
+  describe('skill_health', () => {
+    it('accepts INSERT with default status=unchecked', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(
+        `INSERT INTO skill_health (skill_id, created_at) VALUES (?, ?)`,
+      ).run('mailcheck', now);
+      const row = db
+        .prepare('SELECT * FROM skill_health WHERE skill_id = ?')
+        .get('mailcheck') as Record<string, unknown>;
+      expect(row.status).toBe('unchecked');
+      expect(row.error_msg).toBeNull();
+    });
+
+    it('UPSERT via INSERT OR REPLACE updates last_check and status', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(
+        `INSERT INTO skill_health (skill_id, status, created_at) VALUES (?, ?, ?)`,
+      ).run('qonto', 'ok', now);
+      db.prepare(
+        `INSERT OR REPLACE INTO skill_health
+           (skill_id, status, error_msg, last_check, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run('qonto', 'error', 'timeout', now + 10, now);
+      const row = db
+        .prepare('SELECT * FROM skill_health WHERE skill_id = ?')
+        .get('qonto') as Record<string, unknown>;
+      expect(row.status).toBe('error');
+      expect(row.error_msg).toBe('timeout');
+      expect(row.last_check).toBe(now + 10);
+    });
+  });
+
+  describe('skill_usage', () => {
+    it('autoincrements id and tracks invocations per skill', () => {
+      const db = _testDb();
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare(
+        `INSERT INTO skill_usage (skill_id, invocations, last_invoked) VALUES (?, ?, ?)`,
+      ).run('daily-plan', 1, now);
+      db.prepare(
+        `INSERT INTO skill_usage (skill_id, invocations, last_invoked) VALUES (?, ?, ?)`,
+      ).run('daily-plan', 2, now + 60);
+      const rows = db
+        .prepare('SELECT * FROM skill_usage WHERE skill_id = ? ORDER BY id')
+        .all('daily-plan') as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[1].invocations).toBe(2);
+      expect(rows[1].id).toBeGreaterThan(rows[0].id as number);
     });
   });
 });
