@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claudeclaw.warroom</string>
+
+  <!--
+    War Room voice meeting service (separate daemon from the Telegram bot).
+    Runs the Python Pipecat server from warroom/.venv/.
+    Independent lifecycle: crashes here do NOT affect the main Node daemon
+    and vice versa.
+
+    Before loading: create the venv and install deps:
+      cd /Users/macminirolland/Dev/ClaudeClaw
+      python3 -m venv warroom/.venv
+      source warroom/.venv/bin/activate
+      pip install -r warroom/requirements.txt
+
+    Then: bash scripts/install-warroom-launchd.sh
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/macminirolland/Dev/ClaudeClaw/warroom/.venv/bin/python</string>
+    <string>warroom/server.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/macminirolland/Dev/ClaudeClaw</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/claudeclaw-warroom.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/claudeclaw-warroom.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/macminirolland/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/macminirolland</string>
+    <!--
+      Runtime config: keep these in sync with the main .env. The daemon
+      reads .env via python-dotenv at startup, so you usually don't need
+      to duplicate here. Uncomment only if you want an override that
+      differs from .env (e.g. live vs voxtral mode on a per-daemon basis).
+    -->
+    <!--
+    <key>WARROOM_MODE</key>
+    <string>live</string>
+    <key>WARROOM_PORT</key>
+    <string>7860</string>
+    -->
+  </dict>
+</dict>
+</plist>
