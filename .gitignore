@@ -40,3 +40,8 @@ scripts/waste-reminder.sh
 CLAUDE.md
 agents/*/agent.yaml
 agents/*/CLAUDE.md
+
+# War Room Python venv (created on host, not versioned)
+warroom/.venv/
+warroom/__pycache__/
+warroom/*.pyc
