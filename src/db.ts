@@ -466,6 +466,15 @@ function runMigrations(database: Database.Database): void {
     logger.info('Migration: added agent_id column to memories table');
   }
 
+  // Legacy compat: V1 on-disk DBs have a `content TEXT NOT NULL` column that
+  // was dropped from the V3 CREATE TABLE. saveStructuredMemory still writes
+  // to it (mapped to summary) for production DB compat. Fresh DBs need the
+  // column too, otherwise INSERT fails with "no such column: content".
+  if (!memColsPost.some((c: { name: string }) => c.name === 'content')) {
+    database.exec(`ALTER TABLE memories ADD COLUMN content TEXT NOT NULL DEFAULT ''`);
+    logger.info('Migration: added content column to memories table (legacy compat)');
+  }
+
   // Hive Mind V2: Add embedding + model tracking to consolidations
   const consolCols = database.prepare('PRAGMA table_info(consolidations)').all() as Array<{ name: string }>;
   if (!consolCols.some((c) => c.name === 'embedding')) {
