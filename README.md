@@ -1179,6 +1179,22 @@ npm test          # Run test suite (vitest)
 npm run typecheck # Type-check without compiling
 ```
 
+### Git hooks
+
+This fork carries a custom 7-provider TTS cascade in `src/voice.ts`
+(Voxtral MLX local, Kokoro, Voxtral API, Gemini Flash, ElevenLabs,
+Gradium, macOS say). A pre-commit hook blocks modifications to
+`src/voice.ts` when working on `feat/ccos-*` branches so upstream
+cherry-picks cannot silently replace the cascade.
+
+Install after cloning:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+Bypass with `git commit --no-verify` only if truly intentional.
+
 ---
 
 ## Is this compliant with Anthropic's Terms of Service?
