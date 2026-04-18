@@ -1,6 +1,8 @@
 import { CronExpressionParser } from 'cron-parser';
+import { Bot } from 'grammy';
 
-import { AGENT_ID, ALLOWED_CHAT_ID } from './config.js';
+import { resolveBotToken } from './agent-config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, activeBotToken } from './config.js';
 import {
   getDueTasks,
   getSession,
@@ -138,6 +140,32 @@ async function runDueTasks(): Promise<void> {
   await runDueMissionTasks();
 }
 
+/**
+ * Build a sender that routes to the Telegram bot of the assigned agent.
+ *
+ * When the mission's assigned_agent matches the current daemon (or is unassigned),
+ * the daemon's own `sender` closure is reused. Otherwise the token is resolved
+ * via agent-config and a fresh grammY Bot is instantiated just for the outbound
+ * sendMessage calls — this lets any daemon (e.g. a central dispatcher) deliver
+ * results through the correct bot.
+ */
+function buildMissionSender(assignedAgent: string | null): Sender {
+  if (!assignedAgent || assignedAgent === schedulerAgentId) {
+    return sender;
+  }
+  const token = resolveBotToken(assignedAgent);
+  if (!token || token === activeBotToken) {
+    return sender;
+  }
+  const agentBot = new Bot(token);
+  return async (text: string) => {
+    if (!ALLOWED_CHAT_ID) return;
+    await agentBot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).catch((err) =>
+      logger.error({ err, assignedAgent }, 'Per-agent mission sender failed'),
+    );
+  };
+}
+
 async function runDueMissionTasks(): Promise<void> {
   const mission = claimNextMissionTask(schedulerAgentId);
   if (!mission) return;
@@ -149,6 +177,7 @@ async function runDueMissionTasks(): Promise<void> {
   logger.info({ missionId: mission.id, title: mission.title }, 'Running mission task');
 
   const chatId = ALLOWED_CHAT_ID || 'mission';
+  const missionSender = buildMissionSender(mission.assigned_agent);
   messageQueue.enqueue(chatId, async () => {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
@@ -160,15 +189,15 @@ async function runDueMissionTasks(): Promise<void> {
       if (result.aborted) {
         completeMissionTask(mission.id, null, 'failed', 'Timed out after 10 minutes');
         logger.warn({ missionId: mission.id }, 'Mission task timed out');
-        try { await sender('Mission task timed out: "' + mission.title + '"'); } catch {}
+        try { await missionSender('Mission task timed out: "' + mission.title + '"'); } catch {}
       } else {
         const text = result.text?.trim() || 'Task completed with no output.';
         completeMissionTask(mission.id, text, 'completed');
         logger.info({ missionId: mission.id }, 'Mission task completed');
 
-        // Send result to Telegram
+        // Send result to Telegram via the assigned agent's bot
         for (const chunk of splitMessage(formatForTelegram(text))) {
-          await sender(chunk);
+          await missionSender(chunk);
         }
 
         // Inject into conversation context so agent can reference it

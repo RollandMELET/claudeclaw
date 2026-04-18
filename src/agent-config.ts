@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 
-import { CLAUDECLAW_CONFIG, PROJECT_ROOT } from './config.js';
+import { activeBotToken, CLAUDECLAW_CONFIG, PROJECT_ROOT } from './config.js';
 import { readEnvFile } from './env.js';
+import { logger } from './logger.js';
 
 export interface AgentConfig {
   name: string;
@@ -133,6 +134,35 @@ export function listAgentIds(): string[] {
   }
 
   return [...ids];
+}
+
+/**
+ * Resolve the Telegram bot token for a given agent ID.
+ *
+ * Used when the scheduler needs to notify via a specific agent's bot after a
+ * mission task completes, even if the current daemon runs under a different
+ * agent identity. Each agent's token is declared in agents/<id>/agent.yaml
+ * (telegram_bot_token_env) and stored in .env.
+ *
+ * Falls back to the current daemon's activeBotToken when:
+ *   - agentId is null/undefined (unassigned mission)
+ *   - agentId is 'main' (main daemon's own token)
+ *   - agent config is missing or its token env var is not set
+ *
+ * The fallback preserves delivery: the result still reaches Telegram, just
+ * via the current bot rather than the assigned agent's bot.
+ */
+export function resolveBotToken(agentId: string | null | undefined): string {
+  if (!agentId || agentId === 'main') return activeBotToken;
+  try {
+    return loadAgentConfig(agentId).botToken || activeBotToken;
+  } catch (err) {
+    logger.warn(
+      { agentId, err: err instanceof Error ? err.message : String(err) },
+      'resolveBotToken: falling back to activeBotToken',
+    );
+    return activeBotToken;
+  }
 }
 
 /** Return the capabilities (name + description) for a specific agent. */
