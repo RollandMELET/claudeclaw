@@ -5,7 +5,7 @@ import { logger } from './logger.js';
  * at a time per chat_id, preventing race conditions on sessions,
  * abort controllers, and conversation logs.
  */
-class MessageQueue {
+export class MessageQueue {
   private chains = new Map<string, Promise<void>>();
   private pending = new Map<string, number>();
 
