@@ -106,13 +106,13 @@ Reply with JSON: {"agent": "agent_id"}`;
 
 const sessionSecret = crypto.randomBytes(32);
 
-function makeSessionToken(user: string): string {
+export function makeSessionToken(user: string): string {
   const payload = `${user}:${Date.now()}`;
   const hmac = crypto.createHmac('sha256', sessionSecret).update(payload).digest('hex');
   return `${Buffer.from(payload).toString('base64')}.${hmac}`;
 }
 
-function verifySessionToken(token: string): boolean {
+export function verifySessionToken(token: string): boolean {
   const dotIdx = token.indexOf('.');
   if (dotIdx < 0) return false;
   const payloadB64 = token.slice(0, dotIdx);
