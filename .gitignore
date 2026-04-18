@@ -46,3 +46,8 @@ agents/*/CLAUDE.md
 warroom/.venv/
 warroom/__pycache__/
 warroom/*.pyc
+
+# Local generation outputs and wiki cache (auto-generated, not versioned)
+outputs/
+wiki/
+.playwright-cli/
