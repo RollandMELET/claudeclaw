@@ -51,3 +51,7 @@ warroom/*.pyc
 outputs/
 wiki/
 .playwright-cli/
+
+# Playwright e2e reports and traces (auto-generated, not versioned)
+playwright-report/
+test-results/

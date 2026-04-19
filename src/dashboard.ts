@@ -59,6 +59,7 @@ import {
 import { processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
 import { getWarRoomHtml } from './warroom-html.js';
+import { validateTranscriptSpeaker } from './warroom-transcript-validator.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import {
   createWarRoomMeeting,
@@ -444,6 +445,14 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.post('/api/warroom/meeting/transcript', async (c) => {
     const body = await c.req.json().catch(() => ({})) as { meetingId?: string; speaker?: string; text?: string };
     if (body.meetingId && body.speaker && body.text) {
+      const validation = validateTranscriptSpeaker(body.speaker);
+      if (!validation.ok) {
+        logger.warn(
+          { meetingId: body.meetingId, speaker: body.speaker, reason: validation.reason },
+          'warroom: rejected transcript entry with invalid speaker',
+        );
+        return c.json({ ok: false, reason: validation.reason }, 400);
+      }
       addWarRoomTranscript(body.meetingId, body.speaker, body.text);
     }
     return c.json({ ok: true });

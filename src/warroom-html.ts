@@ -1779,7 +1779,7 @@ async function toggleMeeting() {
                       },
                       onBotReady: function() {},
                       onUserTranscript: function(data) { if (data && data.final) addTranscriptEntry('You', data.text); },
-                      onBotTranscript: function(data) { if (data) addTranscriptEntry('Agent', data.text || '', 'main'); },
+                      onBotTranscript: function(data) { if (data) addTranscriptEntry(AGENT_LABELS[pinnedAgent] || pinnedAgent || 'Main', data.text || '', pinnedAgent || 'main'); },
                       onServerMessage: function(msg) { handleServerMessage(msg); },
                       onError: function(err) { console.error('[WarRoom] Reconnect error:', err); },
                     },
@@ -1810,7 +1810,7 @@ async function toggleMeeting() {
               }
             },
             onBotTranscript: function(data) {
-              if (data) addTranscriptEntry('Agent', data.text || '', 'main');
+              if (data) addTranscriptEntry(AGENT_LABELS[pinnedAgent] || pinnedAgent || 'Main', data.text || '', pinnedAgent || 'main');
             },
             onServerMessage: function(msg) { handleServerMessage(msg); },
             onError: function(error) {
