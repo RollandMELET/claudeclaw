@@ -428,6 +428,7 @@ export function getWarRoomHtml(token: string, chatId: string, warroomPort: numbe
     display: flex;
     flex-direction: column;
     background: rgba(5,5,5,0.95);
+    position: relative; /* anchor for the absolutely-positioned archive panel */
   }
   .transcript-area {
     flex: 1;
@@ -474,6 +475,193 @@ export function getWarRoomHtml(token: string, chatId: string, warroomPort: numbe
     color: #aaa;
   }
   .transcript-text.system-text { color: #333; font-size: 12px; }
+
+  /* ── Archive view (Slice 3, Past Meetings) ── */
+  /* Header button: compact, matches .back-link + .mode-btn tone. */
+  .btn-archive {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.55);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-left: 16px;
+  }
+  .btn-archive:hover {
+    background: rgba(255,255,255,0.04);
+    color: #fff;
+    border-color: rgba(255,255,255,0.12);
+  }
+  .btn-archive.active {
+    background: rgba(59,130,246,0.1);
+    border-color: rgba(59,130,246,0.25);
+    color: #3b82f6;
+  }
+
+  .archive-panel {
+    position: absolute;
+    inset: 0;
+    background: rgba(5,5,5,0.98);
+    display: none;
+    flex-direction: column;
+    z-index: 8;
+    overflow: hidden;
+  }
+  .archive-panel.visible { display: flex; }
+  .archive-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .archive-header .archive-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #3b82f6;
+  }
+  .archive-back-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.65);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .archive-back-btn:hover {
+    background: rgba(255,255,255,0.04);
+    color: #fff;
+  }
+
+  .archive-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 28px;
+  }
+  .archive-body::-webkit-scrollbar { width: 4px; }
+  .archive-body::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
+
+  .archive-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    padding: 40px;
+  }
+  .archive-empty .icon { font-size: 36px; opacity: 0.18; }
+  .archive-empty .text {
+    font-size: 13px;
+    color: #555;
+    letter-spacing: 0.5px;
+  }
+
+  .archive-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto auto;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .archive-row:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(59,130,246,0.2);
+  }
+  .archive-row .col-date {
+    font-size: 13px;
+    color: #ddd;
+    font-weight: 500;
+  }
+  .archive-row .col-agent {
+    font-size: 11px;
+    color: #22c55e;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .archive-row .col-duration,
+  .archive-row .col-mode,
+  .archive-row .col-entries {
+    font-size: 11px;
+    color: #666;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .archive-detail-header {
+    padding: 6px 0 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    margin-bottom: 20px;
+  }
+  .archive-detail-header .meta {
+    font-size: 11px;
+    color: #666;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.5px;
+  }
+  .archive-detail-header .meta strong {
+    color: #ddd;
+    font-weight: 600;
+  }
+
+  .archive-entry {
+    display: grid;
+    grid-template-columns: 80px 100px 1fr;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    align-items: flex-start;
+  }
+  .archive-entry:last-child { border-bottom: none; }
+  .archive-entry .times {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #555;
+  }
+  .archive-entry .times .absolute {
+    color: #888;
+    font-weight: 500;
+  }
+  .archive-entry .times .relative {
+    color: #3b82f6;
+  }
+  .archive-entry .speaker {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #22c55e;
+    padding-top: 2px;
+  }
+  .archive-entry .speaker.user { color: #60a5fa; }
+  .archive-entry .speaker.system { color: #555; }
+  .archive-entry .text {
+    font-size: 13px;
+    line-height: 1.55;
+    color: #bbb;
+    word-break: break-word;
+  }
 
   /* ── Controls ── */
   .controls {
@@ -739,7 +927,11 @@ export function getWarRoomHtml(token: string, chatId: string, warroomPort: numbe
   <div class="header">
     <a href="/?token=${safeToken}&chatId=${safeChatId}" class="back-link">&larr; Mission Control</a>
     <h1>War Room</h1>
-    <div class="cost-display" id="costDisplay">$0.000</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <!-- Slice 3: Past Meetings archive (read-only). Toggles the overlay panel. -->
+      <button type="button" class="btn-archive" id="pastMeetingsBtn" onclick="togglePastMeetings()">Past Meetings</button>
+      <div class="cost-display" id="costDisplay">$0.000</div>
+    </div>
   </div>
 
   <div class="main">
@@ -774,6 +966,17 @@ export function getWarRoomHtml(token: string, chatId: string, warroomPort: numbe
         <div class="transcript-placeholder" id="placeholder">
           <div class="icon">&#127908;</div>
           <div class="text">Start a meeting to begin</div>
+        </div>
+      </div>
+
+      <!-- Slice 3: archive overlay. Hidden by default; togglePastMeetings() reveals it. -->
+      <div class="archive-panel" id="archivePanel" aria-hidden="true">
+        <div class="archive-header">
+          <div class="archive-title" id="archiveTitle">Past Meetings</div>
+          <button type="button" class="archive-back-btn" id="archiveBackBtn" onclick="closeArchive()">&larr; Back to Live</button>
+        </div>
+        <div class="archive-body" id="archiveBody">
+          <!-- Populated by renderArchiveList() / renderArchiveDetail(). -->
         </div>
       </div>
 
@@ -1972,6 +2175,242 @@ function toggleMic() {
     document.getElementById('statusText').textContent = 'muted';
   }
 }
+
+// ── Slice 3: Past Meetings archive (read-only) ─────────────────────────
+// Simple two-state machine (list -> detail). No router, no framework.
+// Data comes from GET /api/warroom/meetings and GET
+// /api/warroom/meeting/:id/transcript (both exist in dashboard.ts).
+var archiveOpen = false;
+
+function togglePastMeetings() {
+  if (archiveOpen) {
+    closeArchive();
+  } else {
+    openArchive();
+  }
+}
+
+function openArchive() {
+  var panel = document.getElementById('archivePanel');
+  var btn = document.getElementById('pastMeetingsBtn');
+  if (!panel || !btn) return;
+  panel.classList.add('visible');
+  panel.setAttribute('aria-hidden', 'false');
+  btn.classList.add('active');
+  archiveOpen = true;
+  loadArchiveList();
+}
+
+function closeArchive() {
+  var panel = document.getElementById('archivePanel');
+  var btn = document.getElementById('pastMeetingsBtn');
+  if (!panel || !btn) return;
+  panel.classList.remove('visible');
+  panel.setAttribute('aria-hidden', 'true');
+  btn.classList.remove('active');
+  archiveOpen = false;
+}
+
+function loadArchiveList() {
+  var body = document.getElementById('archiveBody');
+  var title = document.getElementById('archiveTitle');
+  if (!body) return;
+  title.textContent = 'Past Meetings';
+  body.innerHTML = '<div style="font-size:11px;color:#444;padding:20px 0">Loading...</div>';
+
+  fetch(API_BASE + '/api/warroom/meetings?limit=20&token=' + encodeURIComponent(TOKEN))
+    .then(function(r) { return r.json(); })
+    .then(function(payload) {
+      renderArchiveList(payload && payload.meetings ? payload.meetings : []);
+    })
+    .catch(function(err) {
+      console.warn('archive: fetch list failed', err);
+      body.innerHTML = '<div data-archive-empty style="color:#ef4444;font-size:12px;padding:20px 0">Failed to load meetings</div>';
+    });
+}
+
+function renderArchiveList(meetings) {
+  var body = document.getElementById('archiveBody');
+  if (!body) return;
+
+  if (!meetings || meetings.length === 0) {
+    body.innerHTML =
+      '<div class="archive-empty" data-archive-empty>' +
+        '<div class="icon">&#128188;</div>' +
+        '<div class="text">No past meetings yet</div>' +
+      '</div>';
+    return;
+  }
+
+  var parts = [];
+  for (var i = 0; i < meetings.length; i++) {
+    var m = meetings[i];
+    var pinnedLabel = (typeof AGENT_LABELS !== 'undefined' && AGENT_LABELS[m.pinned_agent])
+      ? AGENT_LABELS[m.pinned_agent]
+      : (m.pinned_agent || 'Main');
+    var dateStr = formatMeetingDate(m.started_at);
+    var durStr = formatDurationShort(m.duration_s);
+    var mode = (m.mode === 'auto') ? 'Hand Up' : 'Direct';
+    var entryCount = (m.entry_count != null ? m.entry_count : 0) + ' entries';
+
+    parts.push(
+      '<div class="archive-row" data-meeting-row data-meeting-id="' + escapeAttr(m.id) + '" ' +
+           'onclick="openMeetingDetail(\\''+ escapeAttr(m.id) +'\\')">' +
+        '<div class="col-date">' + escapeHtml(dateStr) + '</div>' +
+        '<div class="col-agent">' + escapeHtml(pinnedLabel) + '</div>' +
+        '<div class="col-duration">' + escapeHtml(durStr) + '</div>' +
+        '<div class="col-mode">' + escapeHtml(mode) + '</div>' +
+        '<div class="col-entries">' + escapeHtml(entryCount) + '</div>' +
+      '</div>'
+    );
+  }
+  body.innerHTML = parts.join('');
+}
+
+function openMeetingDetail(meetingId) {
+  var body = document.getElementById('archiveBody');
+  var title = document.getElementById('archiveTitle');
+  if (!body) return;
+  title.textContent = 'Meeting - ' + meetingId.slice(0, 8);
+  body.innerHTML = '<div style="font-size:11px;color:#444;padding:20px 0">Loading transcript...</div>';
+
+  Promise.all([
+    fetch(API_BASE + '/api/warroom/meetings?limit=100&token=' + encodeURIComponent(TOKEN))
+      .then(function(r) { return r.json(); })
+      .catch(function() { return { meetings: [] }; }),
+    fetch(API_BASE + '/api/warroom/meeting/' + encodeURIComponent(meetingId) +
+          '/transcript?token=' + encodeURIComponent(TOKEN))
+      .then(function(r) { return r.json(); })
+      .catch(function() { return { transcript: [] }; })
+  ]).then(function(results) {
+    var meetings = (results[0] && results[0].meetings) || [];
+    var transcript = (results[1] && results[1].transcript) || [];
+    var meeting = null;
+    for (var i = 0; i < meetings.length; i++) {
+      if (meetings[i].id === meetingId) { meeting = meetings[i]; break; }
+    }
+    renderArchiveDetail(meeting, transcript);
+  });
+}
+
+function renderArchiveDetail(meeting, transcript) {
+  var body = document.getElementById('archiveBody');
+  if (!body) return;
+
+  var startEpoch = 0;
+  if (meeting && typeof meeting.started_at === 'number') {
+    startEpoch = meeting.started_at;
+  } else if (transcript && transcript.length > 0 && typeof transcript[0].created_at === 'number') {
+    // Fallback: first transcript entry time, so offsets still resolve.
+    startEpoch = transcript[0].created_at;
+  }
+
+  var header = '';
+  if (meeting) {
+    var pinnedLabel = (typeof AGENT_LABELS !== 'undefined' && AGENT_LABELS[meeting.pinned_agent])
+      ? AGENT_LABELS[meeting.pinned_agent]
+      : (meeting.pinned_agent || 'Main');
+    header =
+      '<div class="archive-detail-header">' +
+        '<div class="meta"><strong>' + escapeHtml(formatMeetingDate(meeting.started_at)) + '</strong> - ' +
+          'pinned: ' + escapeHtml(pinnedLabel) + ' - ' +
+          'duration: ' + escapeHtml(formatDurationShort(meeting.duration_s)) + ' - ' +
+          'mode: ' + escapeHtml(meeting.mode === 'auto' ? 'Hand Up' : 'Direct') +
+        '</div>' +
+      '</div>';
+  }
+
+  if (!transcript || transcript.length === 0) {
+    body.innerHTML =
+      header +
+      '<div class="archive-empty" data-archive-empty>' +
+        '<div class="icon">&#128196;</div>' +
+        '<div class="text">No transcript entries for this meeting</div>' +
+      '</div>';
+    return;
+  }
+
+  var parts = [header];
+  for (var j = 0; j < transcript.length; j++) {
+    var entry = transcript[j];
+    var absTime = formatAbsoluteHMS(entry.created_at);
+    var relOffset = formatRelativeOffset(entry.created_at, startEpoch);
+    var speaker = entry.speaker || 'agent';
+    var speakerLabel = resolveSpeakerLabel(speaker);
+    var speakerClass = (speaker === 'user') ? 'user' : (speaker === 'system' ? 'system' : '');
+
+    parts.push(
+      '<div class="archive-entry" data-transcript-entry>' +
+        '<div class="times">' +
+          '<span class="absolute" data-absolute-time>' + escapeHtml(absTime) + '</span>' +
+          '<span class="relative" data-relative-offset>' + escapeHtml(relOffset) + '</span>' +
+        '</div>' +
+        '<div class="speaker ' + speakerClass + '">' + escapeHtml(speakerLabel) + '</div>' +
+        '<div class="text">' + escapeHtml(entry.text || '') + '</div>' +
+      '</div>'
+    );
+  }
+  body.innerHTML = parts.join('');
+}
+
+function resolveSpeakerLabel(speaker) {
+  if (!speaker) return 'Agent';
+  if (speaker === 'user') return 'You';
+  if (speaker === 'system') return 'System';
+  if (typeof AGENT_LABELS !== 'undefined' && AGENT_LABELS[speaker]) return AGENT_LABELS[speaker];
+  return speaker;
+}
+
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function formatAbsoluteHMS(epochSeconds) {
+  if (typeof epochSeconds !== 'number' || !isFinite(epochSeconds)) return '00:00:00';
+  var d = new Date(epochSeconds * 1000);
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+}
+
+function formatRelativeOffset(epochSeconds, startEpoch) {
+  if (typeof epochSeconds !== 'number' || typeof startEpoch !== 'number') return '00:00';
+  var delta = Math.max(0, Math.floor(epochSeconds - startEpoch));
+  var m = Math.floor(delta / 60);
+  var s = delta % 60;
+  return pad2(m) + ':' + pad2(s);
+}
+
+function formatMeetingDate(epochSeconds) {
+  if (typeof epochSeconds !== 'number' || !isFinite(epochSeconds)) return '-';
+  var d = new Date(epochSeconds * 1000);
+  // Locale-aware compact: "2026-04-20 14:35"
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+         ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+
+function formatDurationShort(seconds) {
+  if (typeof seconds !== 'number' || seconds <= 0) return '-';
+  var m = Math.floor(seconds / 60);
+  var s = Math.floor(seconds % 60);
+  if (m === 0) return s + 's';
+  return m + 'm ' + pad2(s) + 's';
+}
+
+function escapeAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Inline escapeHtml for archive rendering. warroom-html already defines
+// one server-side; here we need a client-side equivalent that runs in
+// the browser without pulling any bundler. Named different from the
+// server helper (escapeHtml is local to the template on the server).
+(function() {
+  if (typeof window.escapeHtml === 'function') return;
+  window.escapeHtml = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+})();
 </script>
 </body>
 </html>`;

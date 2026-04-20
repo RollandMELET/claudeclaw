@@ -134,8 +134,18 @@ async function stubBackend(
     route.fulfill({ status: 204, body: '' }),
   );
 
+  // Playwright resolves page.route() handlers in REVERSE registration
+  // order — the most recently registered matcher wins. So we register
+  // the catch-all FIRST and the specific endpoints LAST, so the specific
+  // ones take priority.
+
+  // Any other /api/warroom/* endpoint the UI might probe: return empty OK.
+  await page.route('**/api/warroom/**', (route: Route) =>
+    route.fulfill({ status: 200, body: '{}' }),
+  );
+
   // Agents roster — the UI fetches this on load to render the sidebar.
-  await page.route('**/api/warroom/agents', (route: Route) =>
+  await page.route('**/api/warroom/agents**', (route: Route) =>
     route.fulfill({
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -151,20 +161,13 @@ async function stubBackend(
     }),
   );
 
-  // Archive list endpoint.
-  await page.route('**/api/warroom/meetings**', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ meetings: opts.meetings }),
-    }),
-  );
-
-  // Per-meeting transcript endpoint.
-  await page.route('**/api/warroom/meeting/*/transcript', (route: Route) => {
+  // Per-meeting transcript endpoint (registered BEFORE /meetings so the
+  // /meetings/:id/transcript pattern wins against the broader /meetings).
+  await page.route('**/api/warroom/meeting/**', (route: Route) => {
     const url = route.request().url();
-    const match = url.match(/\/api\/warroom\/meeting\/([^/]+)\/transcript/);
-    const meetingId = match ? match[1] : '';
+    const match = url.match(/\/api\/warroom\/meeting\/([^/?#]+)\/transcript/);
+    if (!match) return route.fallback();
+    const meetingId = decodeURIComponent(match[1]);
     const transcript = opts.transcriptFor[meetingId] ?? [];
     return route.fulfill({
       status: 200,
@@ -173,9 +176,14 @@ async function stubBackend(
     });
   });
 
-  // Any other /api/warroom/* endpoint the UI might probe: return empty OK.
-  await page.route('**/api/warroom/**', (route: Route) =>
-    route.fulfill({ status: 200, body: '{}' }),
+  // Archive list endpoint — register LAST so it takes precedence over
+  // the catch-all above.
+  await page.route('**/api/warroom/meetings**', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ meetings: opts.meetings }),
+    }),
   );
 }
 
