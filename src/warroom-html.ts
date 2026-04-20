@@ -2859,59 +2859,72 @@ function saveSettings() {
     });
 }
 
-function sendWarRoomText() {
-  if (window.WARROOM_TEXT_INPUT === '0') return; // server-disabled
-  var input = document.getElementById('warroomTextInput');
-  if (!input) return;
-  var raw = (input.value || '').trim();
+// ── Slice 8: InputController (voice + text unified entry point) ────────
+// Both the text input bar (sendWarRoomText) and the Pipecat STT
+// callback (onUserTranscript) funnel through window.sendUserInput().
+// That way the local echo + persistence + data-speaker attribute live
+// in one place. Only text-sourced input also rounds-trips through
+// pipecatClient.sendClientMessage('text-input') — voice input is
+// already on-wire before we see its transcription.
+window.sendUserInput = function sendUserInput(input) {
+  if (!input || typeof input !== 'object') return;
+  var source = input.source === 'voice' ? 'voice' : 'text';
+  var raw = typeof input.text === 'string' ? input.text.trim() : '';
   if (!raw) return; // no empty/whitespace turns
-  var text = raw;
 
-  // Local echo: show the typed text in the transcript before the
-  // round-trip. addTranscriptEntry('You', ...) renders with the
-  // .transcript-speaker.user class and persists via
-  // POST /api/warroom/meeting/transcript (speaker='user' on the wire).
-  // The test asserts on both the "user" class and the word "user",
-  // so we also tag the entry with a data-speaker attribute for
-  // robustness against label tweaks.
+  // Local echo — shared between voice and text paths.
   try {
-    addTranscriptEntry('You', text);
+    addTranscriptEntry('You', raw);
     var entries = document.querySelectorAll('#transcript .transcript-entry');
     if (entries.length) {
       entries[entries.length - 1].setAttribute('data-speaker', 'user');
+      entries[entries.length - 1].setAttribute('data-source', source);
     }
-  } catch (e) {
-    console.warn('text-input: local echo failed', e);
-  }
+  } catch (e) { console.warn('sendUserInput: echo failed', e); }
 
-  // Persist as a user turn so the archive (Slice 3) and session store
-  // (Slice 2 when --meeting-id is wired) both see the text turn. This
-  // posts to the same endpoint the voice pipeline uses.
+  // Persist as a user turn so the archive (Slice 3) + session store
+  // (Slice 2) see BOTH voice and text turns with speaker='user'. For
+  // voice turns, Pipecat's own transcript pipeline may also persist —
+  // the warroom_transcript schema de-duplicates by (meeting_id, id),
+  // so a belt-and-suspenders write here is harmless.
   if (typeof currentMeetingId !== 'undefined' && currentMeetingId) {
     try {
       fetch(API_BASE + '/api/warroom/meeting/transcript', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ meetingId: currentMeetingId, speaker: 'user', text: text })
-      }).catch(function(e) { console.warn('text-input: persist failed', e); });
-    } catch (e) { console.warn('text-input: persist setup failed', e); }
+        body: JSON.stringify({ meetingId: currentMeetingId, speaker: 'user', text: raw })
+      }).catch(function(e) { console.warn('sendUserInput: persist failed', e); });
+    } catch (e) { console.warn('sendUserInput: persist setup failed', e); }
   }
 
-  // Route to Pipecat / Gemini Live. The warroom server registers an
-  // on_client_message handler for type "text-input" that queues an
-  // LLMMessagesAppendFrame(role='user') so the model sees it as a
-  // normal user turn and answers vocally.
-  try {
-    if (pipecatClient && typeof pipecatClient.sendClientMessage === 'function') {
-      pipecatClient.sendClientMessage('text-input', { text: text });
-    } else {
-      console.warn('text-input: no live pipecatClient (meeting not started?)');
+  // Only text-sourced input reaches the model via sendClientMessage.
+  // Voice input already hit Gemini Live via the WS transport before
+  // we saw the transcription.
+  if (source === 'text') {
+    try {
+      if (pipecatClient && typeof pipecatClient.sendClientMessage === 'function') {
+        pipecatClient.sendClientMessage('text-input', { text: raw });
+      } else {
+        console.warn('sendUserInput: no live pipecatClient (meeting not started?)');
+      }
+    } catch (e) {
+      console.warn('sendUserInput: sendClientMessage failed', e);
     }
-  } catch (e) {
-    console.warn('text-input: sendClientMessage failed', e);
   }
+};
 
-  // Clear + refocus for the next turn (keyboard flow).
+function sendWarRoomText() {
+  if (window.WARROOM_TEXT_INPUT === '0') return; // server-disabled
+  var input = document.getElementById('warroomTextInput');
+  if (!input) return;
+  var raw = (input.value || '').trim();
+  if (!raw) return;
+
+  // Unified entry point: local echo + persist + Pipecat round-trip
+  // live in window.sendUserInput. sendWarRoomText is now a thin shim
+  // that owns UX concerns only (clear + refocus).
+  window.sendUserInput({ source: 'text', text: raw });
+
   input.value = '';
   input.focus();
 }
