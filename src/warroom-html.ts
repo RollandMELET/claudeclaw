@@ -15,6 +15,8 @@ export function getWarRoomHtml(
   textInputEnabled: boolean = true,
   /** Slice 6 feature flag. Default true = show Resume button + allow POST. */
   resumeEnabled: boolean = true,
+  /** Slice 7 feature flag. Default true = show the gear icon + Settings panel. */
+  settingsEnabled: boolean = true,
 ): string {
   const safeToken = escapeHtml(token);
   const safeChatId = escapeHtml(chatId);
@@ -25,6 +27,7 @@ export function getWarRoomHtml(
   // and stable (avoids truthy/falsy surprises on tags like "yes"/"no").
   const jsTextInputFlag = textInputEnabled ? '"1"' : '"0"';
   const jsResumeFlag = resumeEnabled ? '"1"' : '"0"';
+  const jsSettingsFlag = settingsEnabled ? '"1"' : '"0"';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -694,6 +697,181 @@ export function getWarRoomHtml(
     to { transform: translateY(0); opacity: 1; }
   }
 
+  /* Slice 7 — Settings panel (overlay over the transcript, like Archive). */
+  .btn-settings {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.55);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-left: 8px;
+    line-height: 1;
+  }
+  .btn-settings:hover {
+    background: rgba(255,255,255,0.04);
+    color: #fff;
+    border-color: rgba(255,255,255,0.12);
+  }
+  .btn-settings.active {
+    background: rgba(59,130,246,0.1);
+    border-color: rgba(59,130,246,0.25);
+    color: #3b82f6;
+  }
+
+  .settings-panel {
+    position: absolute;
+    inset: 0;
+    background: rgba(5,5,5,0.98);
+    display: none;
+    flex-direction: column;
+    z-index: 8;
+    overflow: hidden;
+  }
+  .settings-panel.visible { display: flex; }
+  .settings-panel .section {
+    margin-bottom: 26px;
+  }
+  .settings-panel .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #3b82f6;
+    margin-bottom: 12px;
+  }
+  .settings-panel .section-hint {
+    font-size: 11px;
+    color: #555;
+    margin-bottom: 12px;
+  }
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 8px;
+    margin-bottom: 6px;
+  }
+  .settings-row .sr-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+  }
+  .settings-row .sr-name {
+    font-size: 13px;
+    color: #ddd;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .settings-row .sr-desc {
+    font-size: 11px;
+    color: #666;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .settings-row .sr-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .reorder-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.5);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .reorder-btn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+  }
+  .reorder-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  .toggle-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle-wrap input[type="checkbox"] {
+    accent-color: #3b82f6;
+    cursor: pointer;
+  }
+
+  .add-obsidian-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 14px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 10px;
+  }
+  .add-obsidian-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .add-obsidian-form label.full { grid-column: 1 / -1; }
+  .add-obsidian-form input,
+  .add-obsidian-form select {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.25);
+    color: #ddd;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+  }
+  .add-obsidian-form input:focus,
+  .add-obsidian-form select:focus {
+    outline: none;
+    border-color: rgba(59,130,246,0.4);
+  }
+  .add-obsidian-form .submit-row {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .save-settings-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+  }
+  .save-settings-row .save-feedback {
+    font-size: 11px;
+    color: #10b981;
+  }
+  .save-settings-row .save-feedback.error { color: #ef4444; }
+
   .archive-entry {
     display: grid;
     grid-template-columns: 80px 100px 1fr;
@@ -1057,6 +1235,7 @@ export function getWarRoomHtml(
     <div style="display:flex;align-items:center;gap:10px">
       <!-- Slice 3: Past Meetings archive (read-only). Toggles the overlay panel. -->
       <button type="button" class="btn-archive" id="pastMeetingsBtn" onclick="togglePastMeetings()">Past Meetings</button>
+      ${settingsEnabled ? '<!-- Slice 7: Settings panel (roster management). -->\n      <button type="button" class="btn-settings" id="settingsBtn" title="Settings" aria-label="Settings" onclick="toggleSettings()">&#9881;</button>' : ''}
       <div class="cost-display" id="costDisplay">$0.000</div>
     </div>
   </div>
@@ -1106,6 +1285,17 @@ export function getWarRoomHtml(
           <!-- Populated by renderArchiveList() / renderArchiveDetail(). -->
         </div>
       </div>
+
+      ${settingsEnabled ? `<!-- Slice 7: settings overlay. Hidden by default; toggleSettings() reveals it. -->
+      <div class="settings-panel" id="settingsPanel" aria-hidden="true">
+        <div class="archive-header">
+          <div class="archive-title">Settings</div>
+          <button type="button" class="archive-back-btn" onclick="closeSettings()">&larr; Back to Live</button>
+        </div>
+        <div class="archive-body" id="settingsBody">
+          <!-- Populated by renderSettings(). -->
+        </div>
+      </div>` : ''}
 
       <div class="controls">
         <button class="btn start" id="meetingBtn" onclick="toggleMeeting()">Start Meeting</button>
@@ -2371,6 +2561,302 @@ function showResumeBadge(meetingId, payload) {
 function dismissResumeBadge() {
   var el = document.querySelector('[data-resume-badge]');
   if (el) el.remove();
+}
+
+// ── Slice 7: settings panel (roster management) ────────────────────────
+// Feature flag mirrors src/config.ts WARROOM_SETTINGS_ENABLED.
+window.WARROOM_SETTINGS_ENABLED = ${jsSettingsFlag};
+
+// Local editable copy of the preferences, plus the base_roster snapshot.
+// Populated by loadSettings() from GET /api/warroom/settings. Persisted
+// to the server via a single POST when the user clicks "Save".
+var settingsState = null;
+
+function toggleSettings() {
+  if (window.WARROOM_SETTINGS_ENABLED === '0') return;
+  var panel = document.getElementById('settingsPanel');
+  var btn = document.getElementById('settingsBtn');
+  if (!panel || !btn) return;
+  if (panel.classList.contains('visible')) {
+    closeSettings();
+  } else {
+    openSettings();
+  }
+}
+
+function openSettings() {
+  var panel = document.getElementById('settingsPanel');
+  var btn = document.getElementById('settingsBtn');
+  if (!panel) return;
+  panel.classList.add('visible');
+  panel.setAttribute('aria-hidden', 'false');
+  if (btn) btn.classList.add('active');
+  loadSettings();
+}
+
+function closeSettings() {
+  var panel = document.getElementById('settingsPanel');
+  var btn = document.getElementById('settingsBtn');
+  if (!panel) return;
+  panel.classList.remove('visible');
+  panel.setAttribute('aria-hidden', 'true');
+  if (btn) btn.classList.remove('active');
+}
+
+function loadSettings() {
+  var body = document.getElementById('settingsBody');
+  if (!body) return;
+  body.innerHTML = '<div style="font-size:11px;color:#444;padding:20px 0">Loading settings...</div>';
+
+  fetch(API_BASE + '/api/warroom/settings?token=' + encodeURIComponent(TOKEN))
+    .then(function(r) { return r.json(); })
+    .then(function(payload) {
+      if (!payload || payload.ok === false) {
+        body.innerHTML = '<div class="archive-empty" data-archive-empty><div class="text">Settings disabled.</div></div>';
+        return;
+      }
+      settingsState = {
+        base_roster: Array.isArray(payload.base_roster) ? payload.base_roster : [],
+        prefs: {
+          disabled_agents: (payload.prefs && Array.isArray(payload.prefs.disabled_agents)) ? payload.prefs.disabled_agents.slice() : [],
+          order: (payload.prefs && Array.isArray(payload.prefs.order)) ? payload.prefs.order.slice() : [],
+          added_obsidian_agents: (payload.prefs && Array.isArray(payload.prefs.added_obsidian_agents)) ? payload.prefs.added_obsidian_agents.slice() : [],
+        }
+      };
+      renderSettings();
+    })
+    .catch(function(err) {
+      console.warn('settings: GET failed', err);
+      body.innerHTML = '<div class="archive-empty"><div class="text" style="color:#ef4444">Failed to load settings</div></div>';
+    });
+}
+
+// Compute the effective sidebar order the user sees: user-specified
+// order first (minus disabled), then unlisted base agents (minus
+// disabled) in their original order.
+function effectiveOrder() {
+  if (!settingsState) return [];
+  var disabled = new Set(settingsState.prefs.disabled_agents);
+  var baseIds = settingsState.base_roster.map(function(a) { return a.id; });
+  var known = new Set(baseIds);
+  var explicit = settingsState.prefs.order.filter(function(id) { return known.has(id) && !disabled.has(id); });
+  var seen = new Set(explicit);
+  var rest = baseIds.filter(function(id) { return !seen.has(id) && !disabled.has(id); });
+  return explicit.concat(rest);
+}
+
+function renderSettings() {
+  var body = document.getElementById('settingsBody');
+  if (!body || !settingsState) return;
+
+  // ── Section 1: Agents actifs (toggle on/off) ──
+  var disabled = new Set(settingsState.prefs.disabled_agents);
+  var toggleRows = settingsState.base_roster.map(function(a) {
+    var checked = !disabled.has(a.id);
+    return (
+      '<div class="settings-row">' +
+        '<div class="sr-main">' +
+          '<div class="sr-name">' + escapeHtml(a.name || a.id) + '</div>' +
+          '<div class="sr-desc">' + escapeHtml(a.id) + '</div>' +
+        '</div>' +
+        '<label class="toggle-wrap">' +
+          '<input type="checkbox" data-toggle-agent="' + escapeAttr(a.id) + '" ' +
+            (checked ? 'checked' : '') + ' ' +
+            'onchange="onToggleAgent(this)" />' +
+          '<span>active</span>' +
+        '</label>' +
+      '</div>'
+    );
+  }).join('');
+
+  // ── Section 2: Add Obsidian agent form ──
+  var formHtml =
+    '<div class="add-obsidian-form" id="addObsidianForm">' +
+      '<label>id<input type="text" data-new-obs="id" placeholder="my-vault" autocapitalize="off"></label>' +
+      '<label>name<input type="text" data-new-obs="name" placeholder="My Vault"></label>' +
+      '<label class="full">description<input type="text" data-new-obs="description" placeholder="Short tag line"></label>' +
+      '<label class="full">vault_root<input type="text" data-new-obs="vault_root" placeholder="~/Obsidian" autocapitalize="off"></label>' +
+      '<label>project_folder<input type="text" data-new-obs="project_folder" placeholder="Notes" autocapitalize="off"></label>' +
+      '<label>voice<input type="text" data-new-obs="voice" placeholder="kokoro" value="kokoro"></label>' +
+      '<label>avatar (optional)<input type="text" data-new-obs="avatar" placeholder="my-vault.png"></label>' +
+      '<label>model (optional)<input type="text" data-new-obs="model" placeholder="sonnet"></label>' +
+      '<div class="submit-row">' +
+        '<button type="button" class="resume-btn" data-add-obsidian-submit onclick="addObsidianFromForm()">Add to list</button>' +
+        '<span id="addObsidianFeedback" style="font-size:11px;color:#666"></span>' +
+      '</div>' +
+    '</div>';
+
+  // List of already-added entries (to show the user what they queued).
+  var addedList = settingsState.prefs.added_obsidian_agents.map(function(e) {
+    return (
+      '<div class="settings-row">' +
+        '<div class="sr-main">' +
+          '<div class="sr-name">' + escapeHtml(e.name || e.id) + '</div>' +
+          '<div class="sr-desc">' + escapeHtml(e.vault_root) + '/' + escapeHtml(e.project_folder) + '</div>' +
+        '</div>' +
+        '<div class="sr-actions">' +
+          '<button type="button" class="reorder-btn" onclick="removeAddedObsidian(\\''+ escapeAttr(e.id) +'\\')" title="Remove">&times;</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  // ── Section 3: Reorder ──
+  var order = effectiveOrder();
+  var byId = {};
+  for (var i = 0; i < settingsState.base_roster.length; i++) {
+    byId[settingsState.base_roster[i].id] = settingsState.base_roster[i];
+  }
+  var reorderRows = order.map(function(id, idx) {
+    var a = byId[id] || { id: id, name: id };
+    var upDisabled = idx === 0 ? 'disabled' : '';
+    var downDisabled = idx === order.length - 1 ? 'disabled' : '';
+    return (
+      '<div class="settings-row">' +
+        '<div class="sr-main">' +
+          '<div class="sr-name">' + escapeHtml(a.name || id) + '</div>' +
+          '<div class="sr-desc">' + escapeHtml(id) + '</div>' +
+        '</div>' +
+        '<div class="sr-actions">' +
+          '<button type="button" class="reorder-btn" data-reorder-up="' + escapeAttr(id) + '" ' + upDisabled + ' onclick="reorderAgent(\\''+ escapeAttr(id) +'\\',-1)" title="Move up">&uarr;</button>' +
+          '<button type="button" class="reorder-btn" data-reorder-down="' + escapeAttr(id) + '" ' + downDisabled + ' onclick="reorderAgent(\\''+ escapeAttr(id) +'\\',1)" title="Move down">&darr;</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  body.innerHTML =
+    '<div class="section">' +
+      '<div class="section-title">Active agents</div>' +
+      '<div class="section-hint">Toggle agents off to hide them from the sidebar. Disabled agents are also excluded from auto-routing.</div>' +
+      toggleRows +
+    '</div>' +
+    '<div class="section">' +
+      '<div class="section-title">Add Obsidian agent</div>' +
+      '<div class="section-hint">Declare a new agent whose Claude Code session runs inside an Obsidian project folder.</div>' +
+      formHtml +
+      (addedList ? '<div style="margin-top:12px"><div class="section-hint">Queued additions:</div>' + addedList + '</div>' : '') +
+    '</div>' +
+    '<div class="section">' +
+      '<div class="section-title">Sidebar order</div>' +
+      '<div class="section-hint">Use &uarr; / &darr; to reorder. Unlisted agents (including newly-added Obsidian ones) land at the end.</div>' +
+      reorderRows +
+    '</div>' +
+    '<div class="save-settings-row">' +
+      '<span id="saveSettingsFeedback" class="save-feedback"></span>' +
+      '<button type="button" class="resume-btn" data-save-settings onclick="saveSettings()">Save</button>' +
+    '</div>';
+}
+
+function onToggleAgent(checkbox) {
+  if (!settingsState) return;
+  var id = checkbox.getAttribute('data-toggle-agent');
+  if (!id) return;
+  var disabled = settingsState.prefs.disabled_agents;
+  if (checkbox.checked) {
+    // Active — remove from disabled list.
+    settingsState.prefs.disabled_agents = disabled.filter(function(x) { return x !== id; });
+  } else {
+    if (disabled.indexOf(id) === -1) disabled.push(id);
+  }
+  // Re-render so the reorder list reflects the new active set.
+  renderSettings();
+}
+
+function reorderAgent(id, delta) {
+  if (!settingsState) return;
+  var order = effectiveOrder();
+  var idx = order.indexOf(id);
+  if (idx < 0) return;
+  var target = idx + delta;
+  if (target < 0 || target >= order.length) return;
+  var tmp = order[idx];
+  order[idx] = order[target];
+  order[target] = tmp;
+  settingsState.prefs.order = order;
+  renderSettings();
+}
+
+function addObsidianFromForm() {
+  if (!settingsState) return;
+  var form = document.getElementById('addObsidianForm');
+  var feedback = document.getElementById('addObsidianFeedback');
+  if (!form) return;
+  function val(field) {
+    var el = form.querySelector('[data-new-obs="' + field + '"]');
+    return el ? (el.value || '').trim() : '';
+  }
+  var entry = {
+    id: val('id'),
+    name: val('name'),
+    description: val('description'),
+    vault_root: val('vault_root'),
+    project_folder: val('project_folder'),
+    voice: val('voice') || 'kokoro',
+  };
+  var avatar = val('avatar'); if (avatar) entry.avatar = avatar;
+  var model = val('model'); if (model) entry.model = model;
+
+  // Light client-side check before queueing. Server re-validates at Save.
+  if (!/^[a-z][a-z0-9_-]{0,29}$/.test(entry.id)) {
+    if (feedback) { feedback.textContent = 'id must match [a-z][a-z0-9_-]{0,29}'; feedback.style.color = '#ef4444'; }
+    return;
+  }
+  if (!entry.vault_root || !entry.project_folder) {
+    if (feedback) { feedback.textContent = 'vault_root and project_folder are required'; feedback.style.color = '#ef4444'; }
+    return;
+  }
+  // Refuse duplicate id on top of base roster or an existing queued add.
+  var baseIds = settingsState.base_roster.map(function(a) { return a.id; });
+  var queuedIds = settingsState.prefs.added_obsidian_agents.map(function(a) { return a.id; });
+  if (baseIds.indexOf(entry.id) !== -1 || queuedIds.indexOf(entry.id) !== -1) {
+    if (feedback) { feedback.textContent = "id '" + entry.id + "' already exists"; feedback.style.color = '#ef4444'; }
+    return;
+  }
+
+  settingsState.prefs.added_obsidian_agents.push(entry);
+  renderSettings();
+}
+
+function removeAddedObsidian(id) {
+  if (!settingsState) return;
+  settingsState.prefs.added_obsidian_agents = settingsState.prefs.added_obsidian_agents.filter(function(e) {
+    return e.id !== id;
+  });
+  renderSettings();
+}
+
+function saveSettings() {
+  if (!settingsState) return;
+  var feedback = document.getElementById('saveSettingsFeedback');
+  if (feedback) { feedback.textContent = 'Saving...'; feedback.classList.remove('error'); }
+
+  fetch(API_BASE + '/api/warroom/settings?token=' + encodeURIComponent(TOKEN), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settingsState.prefs),
+  })
+    .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+    .then(function(res) {
+      if (res.status !== 200 || !res.body || res.body.ok === false) {
+        var msg = (res.body && res.body.error) ? res.body.error : 'Save failed';
+        if (feedback) { feedback.textContent = msg; feedback.classList.add('error'); }
+        return;
+      }
+      if (feedback) {
+        feedback.textContent = 'Saved';
+        feedback.classList.remove('error');
+        // Data attribute the e2e spec waits on.
+        var body = document.getElementById('settingsBody');
+        if (body) body.setAttribute('data-settings-saved', '1');
+      }
+      // Refresh the sidebar so disabled/reordered agents apply immediately.
+      try { if (typeof loadAgentCards === 'function') loadAgentCards(); } catch (e) { /* */ }
+    })
+    .catch(function(err) {
+      console.warn('settings: POST failed', err);
+      if (feedback) { feedback.textContent = 'Save failed: ' + (err && err.message ? err.message : 'unknown'); feedback.classList.add('error'); }
+    });
 }
 
 function sendWarRoomText() {

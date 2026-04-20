@@ -66,10 +66,20 @@ import {
 } from './warroom-meeting-file.js';
 import { loadObsidianAgents } from './warroom-obsidian-agents.js';
 import {
+  loadUserPreferences,
+  saveUserPreferences,
+  applyUserPreferences,
+  validateNewObsidianInput,
+  type UserPreferences,
+  type RosterEntry,
+} from './warroom-user-preferences.js';
+import {
   WARROOM_ENABLED,
   WARROOM_PORT,
   WARROOM_TEXT_INPUT,
   WARROOM_RESUME_ENABLED,
+  WARROOM_SETTINGS_ENABLED,
+  WARROOM_USER_PREFS_FILE,
 } from './config.js';
 import {
   createWarRoomMeeting,
@@ -276,6 +286,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
         WARROOM_PORT,
         WARROOM_TEXT_INPUT,
         WARROOM_RESUME_ENABLED,
+        WARROOM_SETTINGS_ENABLED,
       ),
     );
   });
@@ -308,40 +319,136 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     });
   });
 
-  app.get('/api/warroom/agents', (c) => {
-    const ids = ['main', ...listAgentIds().filter((id) => id !== 'main')];
-    const agents: Array<{ id: string; name: string; description: string; origin?: string }> =
-      ids.map((id) => {
-        try {
-          if (id === 'main') return { id: 'main', name: 'RC1 (Main)', description: 'Orchestrateur principal, triage, comms externes' };
-          const cfg = loadAgentConfig(id);
-          return { id, name: cfg.name || id, description: cfg.description || '' };
-        } catch {
-          return { id, name: id, description: '' };
-        }
-      });
+  /** Path to the user-prefs YAML (gitignored) — respects env override. */
+  const userPrefsPath = (): string =>
+    WARROOM_USER_PREFS_FILE || path.join(PROJECT_ROOT, 'config', 'user-preferences.yaml');
 
-    // Slice 5 — merge Obsidian agents (config/obsidian-agents.yaml).
-    // Base entries win on id collision; Obsidian YAML cannot override
-    // a directory-backed agent. Dedup + append in YAML order.
+  /**
+   * Assemble the "base roster" — the 8 directory-backed agents plus any
+   * YAML-declared Obsidian agents (Slice 5). This list is the input to
+   * Slice 7's user preferences (filter/reorder/append).
+   */
+  const buildBaseRoster = (): RosterEntry[] => {
+    const ids = ['main', ...listAgentIds().filter((id) => id !== 'main')];
+    const base: RosterEntry[] = ids.map((id) => {
+      try {
+        if (id === 'main') return { id: 'main', name: 'RC1 (Main)', description: 'Orchestrateur principal, triage, comms externes' };
+        const cfg = loadAgentConfig(id);
+        return { id, name: cfg.name || id, description: cfg.description || '' };
+      } catch {
+        return { id, name: id, description: '' };
+      }
+    });
     try {
       const yamlPath = path.join(PROJECT_ROOT, 'config', 'obsidian-agents.yaml');
-      const seen = new Set(agents.map((a) => a.id));
+      const seen = new Set(base.map((a) => a.id));
       for (const obs of loadObsidianAgents(yamlPath)) {
         if (seen.has(obs.id)) continue;
-        agents.push({
+        base.push({
           id: obs.id,
           name: obs.name,
           description: obs.description,
           origin: 'obsidian',
+          vault_root: (obs as { vault_root?: string }).vault_root,
+          project_folder: (obs as { project_folder?: string }).project_folder,
+          voice: obs.voice,
+          avatar: obs.avatar,
+          model: obs.model,
         });
         seen.add(obs.id);
       }
     } catch (err) {
       logger.warn({ err: (err as Error).message }, 'warroom: obsidian agent merge failed');
     }
+    return base;
+  };
 
+  app.get('/api/warroom/agents', (c) => {
+    const base = buildBaseRoster();
+    // Slice 7 — apply user preferences on top (filter disabled, reorder,
+    // append added Obsidian agents from the Settings panel).
+    const prefs = loadUserPreferences(userPrefsPath());
+    const final = applyUserPreferences(base, prefs);
+    // Strip fields the client sidebar doesn't need (keep it lean).
+    const agents = final.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      ...(a.origin ? { origin: a.origin } : {}),
+    }));
     return c.json({ agents });
+  });
+
+  app.get('/api/warroom/settings', (c) => {
+    if (!WARROOM_SETTINGS_ENABLED) {
+      return c.json({ ok: false, error: 'settings disabled' }, 403);
+    }
+    const base = buildBaseRoster();
+    const prefs = loadUserPreferences(userPrefsPath());
+    return c.json({ ok: true, prefs, base_roster: base });
+  });
+
+  app.post('/api/warroom/settings', async (c) => {
+    if (!WARROOM_SETTINGS_ENABLED) {
+      return c.json({ ok: false, error: 'settings disabled' }, 403);
+    }
+    // Size guard: a realistic settings payload is < 10 KB; clamp at
+    // 64 KB to refuse anything pathological.
+    const raw = await c.req.text().catch(() => '');
+    if (raw.length > 64 * 1024) {
+      return c.json({ ok: false, error: 'payload too large' }, 413);
+    }
+    let body: Partial<UserPreferences>;
+    try {
+      body = (raw ? JSON.parse(raw) : {}) as Partial<UserPreferences>;
+    } catch {
+      return c.json({ ok: false, error: 'invalid JSON' }, 400);
+    }
+
+    const base = buildBaseRoster();
+    const baseIds = new Set(base.map((a) => a.id));
+
+    const disabled_agents = Array.isArray(body.disabled_agents)
+      ? body.disabled_agents.filter(
+          (id): id is string => typeof id === 'string' && (baseIds.has(id) || true),
+        )
+      : [];
+    const order = Array.isArray(body.order)
+      ? body.order.filter(
+          (id): id is string => typeof id === 'string' && baseIds.has(id),
+        )
+      : [];
+
+    // Validate each added_obsidian_agents entry server-side. An
+    // invalid entry rejects the whole POST so the client can surface
+    // a precise error.
+    const rawAdded = Array.isArray(body.added_obsidian_agents) ? body.added_obsidian_agents : [];
+    const added_obsidian_agents = [];
+    for (const entry of rawAdded) {
+      if (!entry || typeof entry !== 'object') continue;
+      const v = validateNewObsidianInput(entry as {
+        id: string; name: string; description: string;
+        vault_root: string; project_folder: string; voice: string;
+        avatar?: string; model?: string;
+      });
+      if (!v.ok) {
+        return c.json({ ok: false, error: v.error || 'invalid entry' }, 400);
+      }
+      // Refuse ids that would shadow a base entry.
+      const entryId = (entry as { id: string }).id;
+      if (baseIds.has(entryId)) {
+        return c.json({ ok: false, error: `id '${entryId}' collides with base agent` }, 400);
+      }
+      added_obsidian_agents.push(entry as {
+        id: string; name: string; description: string;
+        vault_root: string; project_folder: string; voice: string;
+        avatar?: string; model?: string;
+      });
+    }
+
+    const prefs: UserPreferences = { disabled_agents, order, added_obsidian_agents };
+    saveUserPreferences(prefs, userPrefsPath());
+    return c.json({ ok: true, prefs });
   });
 
   app.post('/api/warroom/start', async (c) => {

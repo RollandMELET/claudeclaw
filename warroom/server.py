@@ -239,35 +239,89 @@ def _rebuild_roster_and_valid_agents() -> set[str]:
 
     obs_agents: list[dict[str, object]] = []
     try:
-        from obsidian_loader import load_agents as _load_obs, merge_into_roster as _merge
+        from obsidian_loader import load_agents as _load_obs
 
         obs_agents = _load_obs(str(OBSIDIAN_YAML))
-        _merge(base, obs_agents, roster_path="/tmp/warroom-agents.json")
-        if obs_agents:
-            logger.info(
-                "warroom: merged %d Obsidian agent(s) into roster: %s",
-                len(obs_agents),
-                ", ".join(str(a.get("id")) for a in obs_agents),
-            )
     except Exception as exc:
-        logger.warning("warroom: Obsidian merge failed, falling back to base roster: %s", exc)
-        # Still write the base roster so _generate_persona has something.
-        try:
-            Path("/tmp/warroom-agents.json").write_text(
-                json.dumps(base, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception as werr:
-            logger.warning("warroom: roster write failed: %s", werr)
+        logger.warning("warroom: Obsidian load failed: %s", exc)
+
+    # Base roster = directory-backed (8) + Obsidian YAML entries.
+    combined: list[dict[str, object]] = list(base)
+    seen = {a["id"] for a in combined}
+    for obs in obs_agents:
+        aid = obs.get("id")
+        if isinstance(aid, str) and aid not in seen:
+            combined.append(obs)
+            seen.add(aid)
+
+    # Slice 7 — apply user preferences (disable/reorder/add) on top.
+    prefs: dict[str, object] = {"disabled_agents": [], "order": [], "added_obsidian_agents": []}
+    prefs_path = os.environ.get(
+        "WARROOM_USER_PREFS_FILE",
+        str(PROJECT_ROOT / "config" / "user-preferences.yaml"),
+    )
+    try:
+        from config_service import (
+            load_agent_config as _load_prefs,
+            apply_roster_preferences as _apply_prefs,
+        )
+
+        prefs = _load_prefs(prefs_path)
+        final_roster = _apply_prefs(combined, prefs)
+        # Expand added Obsidian agents into cwd entries so _cwd_for_agent
+        # can find them at spawn time. We resolve each added entry's
+        # vault_root/project_folder through os.path (mirroring the
+        # TypeScript loader) — invalid entries have already been filtered
+        # by validateNewObsidianInput on POST, but defend here too.
+        added = prefs.get("added_obsidian_agents") or []
+        if isinstance(added, list):
+            for add in added:
+                if not isinstance(add, dict):
+                    continue
+                vault_root = add.get("vault_root")
+                project_folder = add.get("project_folder")
+                if not isinstance(vault_root, str) or not isinstance(project_folder, str):
+                    continue
+                try:
+                    vault_resolved = Path(os.path.expanduser(vault_root)).resolve()
+                    candidate = (vault_resolved / project_folder).resolve()
+                    candidate.relative_to(vault_resolved)
+                    if not candidate.is_dir():
+                        continue
+                    # Merge the cwd into the entry (used by _cwd_for_agent).
+                    add["cwd"] = str(candidate)
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("warroom: user preferences apply failed: %s", exc)
+        final_roster = combined
+
+    # Write the final roster to /tmp/warroom-agents.json.
+    try:
+        Path("/tmp/warroom-agents.json").write_text(
+            json.dumps(final_roster, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as werr:
+        logger.warning("warroom: roster write failed: %s", werr)
+
+    if obs_agents:
+        logger.info(
+            "warroom: roster built (base=%d, obsidian=%d, final=%d)",
+            len(base), len(obs_agents), len(final_roster),
+        )
 
     _OBSIDIAN_AGENTS_CACHE.clear()
     _OBSIDIAN_AGENTS_CACHE.extend(obs_agents)
+    # Also cache added_obsidian_agents so _cwd_for_agent can resolve
+    # them (they carry their own 'cwd' once resolved above).
+    added = prefs.get("added_obsidian_agents") if isinstance(prefs, dict) else None
+    if isinstance(added, list):
+        for add in added:
+            if isinstance(add, dict) and isinstance(add.get("id"), str) and add.get("cwd"):
+                _OBSIDIAN_AGENTS_CACHE.append(add)
 
-    valid = {a["id"] for a in base}
-    for a in obs_agents:
-        aid = a.get("id")
-        if isinstance(aid, str):
-            valid.add(aid)
+    valid = {a["id"] for a in final_roster if isinstance(a.get("id"), str)}
     return valid
 
 

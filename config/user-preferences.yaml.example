@@ -1,0 +1,34 @@
+# Slice 7 — War Room user preferences
+#
+# Copy this file to config/user-preferences.yaml (gitignored) and edit
+# to suit. The Settings panel (gear icon in the War Room header) also
+# writes to this file via POST /api/warroom/settings, so manual edits
+# and UI changes share the same source of truth.
+#
+# Schema (all three fields are optional; empty arrays are the defaults):
+#
+#   disabled_agents:       list of agent ids filtered out of the sidebar.
+#   order:                 explicit sidebar ordering. Unlisted agents
+#                          keep their original relative order at the end.
+#   added_obsidian_agents: NEW Obsidian-backed agents declared from the
+#                          Settings UI (same shape as
+#                          config/obsidian-agents.yaml entries but as a
+#                          flat list, each with an explicit `id`).
+
+disabled_agents:
+  # - research
+
+order:
+  # - main
+  # - rc2
+  # - comms
+
+added_obsidian_agents:
+  # - id: my-notes
+  #   name: My Notes
+  #   description: Personal notes vault
+  #   vault_root: ~/Obsidian
+  #   project_folder: My Notes
+  #   voice: kokoro
+  #   avatar: my-notes.png
+  #   model: sonnet

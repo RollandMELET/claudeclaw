@@ -59,3 +59,7 @@ test-results/
 # Slice 5 — Obsidian agents config (local paths, not versioned).
 # Commit only config/obsidian-agents.example.yaml as a template.
 config/obsidian-agents.yaml
+
+# Slice 7 — War Room user preferences (settings panel state).
+# Commit only config/user-preferences.yaml.example as a template.
+config/user-preferences.yaml
