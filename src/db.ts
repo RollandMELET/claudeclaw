@@ -2132,3 +2132,81 @@ export function getWarRoomMeetings(limit = 20): unknown[] {
 export function getWarRoomTranscript(meetingId: string): unknown[] {
   return db.prepare('SELECT * FROM warroom_transcript WHERE meeting_id = ? ORDER BY id').all(meetingId);
 }
+
+// ── Slice 2 — session store stubs (RED) ──────────────────────────────
+// These functions are intentionally unimplemented — they are stubs to allow
+// TypeScript to compile while the RED tests fail at runtime.
+// Implementation lands in the GREEN phase.
+
+export interface WarRoomAgentSessionRow {
+  id: string;
+  meeting_id: string;
+  agent_id: string;
+  session_id: string;
+  mode: string;
+  started_at: number;
+  last_activity_at: number;
+  status: string;
+  fork_at_message_id: string | null;
+  created_at: number;
+}
+
+export interface WarRoomTurnRow {
+  id: string;
+  meeting_id: string;
+  agent_session_id: string;
+  turn_number: number;
+  input_source: string;
+  user_message: string | null;
+  agent_response: string | null;
+  claude_message_uuid: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  did_compact: number;
+  created_at: number;
+}
+
+export interface WarRoomResumptionCheckpointRow {
+  id: string;
+  agent_session_id: string;
+  from_message_id: string;
+  reason: string | null;
+  checkpoint_at: number;
+  metadata: string | null;
+  created_at: number;
+}
+
+export function createWarRoomAgentSession(_db: Database.Database, _params: {
+  meeting_id: string;
+  agent_id: string;
+  session_id: string;
+  mode?: string;
+}): WarRoomAgentSessionRow {
+  throw new Error('not implemented — Slice 2 GREEN');
+}
+
+export function addWarRoomTurn(_db: Database.Database, _params: {
+  agent_session_id: string;
+  meeting_id: string;
+  input_source?: string;
+  user_message?: string;
+  agent_response?: string;
+  claude_message_uuid?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  did_compact?: boolean;
+}): WarRoomTurnRow {
+  throw new Error('not implemented — Slice 2 GREEN');
+}
+
+export function saveResumptionCheckpoint(_db: Database.Database, _params: {
+  agent_session_id: string;
+  from_message_id: string;
+  reason?: string;
+  checkpoint_at?: number;
+  metadata?: string;
+}): WarRoomResumptionCheckpointRow {
+  throw new Error('not implemented — Slice 2 GREEN');
+}
