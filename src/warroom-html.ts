@@ -13,6 +13,8 @@ export function getWarRoomHtml(
   warroomPort: number,
   /** Slice 4 feature flag. Default true = show hybrid text input. */
   textInputEnabled: boolean = true,
+  /** Slice 6 feature flag. Default true = show Resume button + allow POST. */
+  resumeEnabled: boolean = true,
 ): string {
   const safeToken = escapeHtml(token);
   const safeChatId = escapeHtml(chatId);
@@ -22,6 +24,7 @@ export function getWarRoomHtml(
   // the same way the server does. "1" / "0" keeps the ambient value small
   // and stable (avoids truthy/falsy surprises on tags like "yes"/"no").
   const jsTextInputFlag = textInputEnabled ? '"1"' : '"0"';
+  const jsResumeFlag = resumeEnabled ? '"1"' : '"0"';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -620,6 +623,10 @@ export function getWarRoomHtml(
     padding: 6px 0 18px;
     border-bottom: 1px solid rgba(255,255,255,0.04);
     margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
   }
   .archive-detail-header .meta {
     font-size: 11px;
@@ -630,6 +637,61 @@ export function getWarRoomHtml(
   .archive-detail-header .meta strong {
     color: #ddd;
     font-weight: 600;
+  }
+
+  /* Slice 6 — Resume button in archive detail + live-view badge. */
+  .resume-btn {
+    background: rgba(59,130,246,0.1);
+    border: 1px solid rgba(59,130,246,0.3);
+    color: #3b82f6;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .resume-btn:hover:not(:disabled) {
+    background: rgba(59,130,246,0.2);
+    color: #fff;
+    border-color: rgba(59,130,246,0.5);
+  }
+  .resume-btn:disabled { opacity: 0.4; cursor: wait; }
+
+  .resume-badge {
+    position: fixed;
+    top: 70px;
+    right: 24px;
+    z-index: 9;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(59,130,246,0.12);
+    border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 10px;
+    color: #93c5fd;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 12px rgba(59,130,246,0.12);
+    animation: badgeSlideIn 0.25s ease;
+  }
+  .resume-badge .dismiss {
+    cursor: pointer;
+    opacity: 0.6;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .resume-badge .dismiss:hover { opacity: 1; }
+  @keyframes badgeSlideIn {
+    from { transform: translateY(-6px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
   }
 
   .archive-entry {
@@ -2252,6 +2314,65 @@ function toggleMic() {
 // "1" / "0" so the inline client JS can noop when disabled.
 window.WARROOM_TEXT_INPUT = ${jsTextInputFlag};
 
+// ── Slice 6: archive resume ────────────────────────────────────────────
+window.WARROOM_RESUME_ENABLED = ${jsResumeFlag};
+
+function resumeMeeting(meetingId) {
+  if (window.WARROOM_RESUME_ENABLED === '0') return;
+  if (!meetingId) return;
+  var btn = document.querySelector('[data-resume-btn][data-meeting-id="' + meetingId + '"]');
+  if (btn) btn.disabled = true;
+
+  fetch(
+    API_BASE + '/api/warroom/meeting/' + encodeURIComponent(meetingId) +
+    '/resume?token=' + encodeURIComponent(TOKEN),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+  )
+    .then(function(r) {
+      if (!r.ok) throw new Error('resume endpoint returned ' + r.status);
+      return r.json();
+    })
+    .then(function(payload) {
+      // Close the archive overlay + flash a visible badge so the user
+      // knows the next question will resume this meeting. The voice
+      // path consumes the resume one-shot via the Python server, so
+      // we just surface the intent locally — nothing else to do.
+      try { closeArchive(); } catch (e) { /* no-op */ }
+      showResumeBadge(meetingId, payload);
+    })
+    .catch(function(err) {
+      console.warn('resume: POST failed', err);
+      if (btn) btn.disabled = false;
+      try {
+        addTranscriptEntry('system', 'Resume failed: ' + (err && err.message ? err.message : 'unknown'));
+      } catch (e) { /* */ }
+    });
+}
+
+function showResumeBadge(meetingId, payload) {
+  // Idempotent: replace any existing badge.
+  var existing = document.querySelector('[data-resume-badge]');
+  if (existing) existing.remove();
+
+  var shortId = (meetingId || '').slice(0, 8);
+  var sessCount = (payload && payload.sessions && payload.sessions.length) || 0;
+  var countLabel = sessCount === 1 ? '1 session' : sessCount + ' sessions';
+
+  var badge = document.createElement('div');
+  badge.className = 'resume-badge';
+  badge.setAttribute('data-resume-badge', '');
+  badge.setAttribute('data-meeting-id', meetingId);
+  badge.innerHTML =
+    '<span>&#10227; Resuming: <strong>' + escapeHtml(shortId) + '</strong> (' + escapeHtml(countLabel) + ')</span>' +
+    '<span class="dismiss" onclick="dismissResumeBadge()">&times;</span>';
+  document.body.appendChild(badge);
+}
+
+function dismissResumeBadge() {
+  var el = document.querySelector('[data-resume-badge]');
+  if (el) el.remove();
+}
+
 function sendWarRoomText() {
   if (window.WARROOM_TEXT_INPUT === '0') return; // server-disabled
   var input = document.getElementById('warroomTextInput');
@@ -2443,6 +2564,17 @@ function renderArchiveDetail(meeting, transcript) {
     var pinnedLabel = (typeof AGENT_LABELS !== 'undefined' && AGENT_LABELS[meeting.pinned_agent])
       ? AGENT_LABELS[meeting.pinned_agent]
       : (meeting.pinned_agent || 'Main');
+    var resumeButtonHtml = '';
+    if (window.WARROOM_RESUME_ENABLED !== '0') {
+      // Slice 6 — "Resume" button next to the meta line. Click triggers
+      // POST /api/warroom/meeting/:id/resume + flips to the live view.
+      resumeButtonHtml =
+        '<button type="button" class="resume-btn" ' +
+          'data-resume-btn data-meeting-id="' + escapeAttr(meeting.id) + '" ' +
+          'onclick="resumeMeeting(\\''+ escapeAttr(meeting.id) +'\\')">' +
+          '&#10227; Resume' +
+        '</button>';
+    }
     header =
       '<div class="archive-detail-header">' +
         '<div class="meta"><strong>' + escapeHtml(formatMeetingDate(meeting.started_at)) + '</strong> - ' +
@@ -2450,6 +2582,7 @@ function renderArchiveDetail(meeting, transcript) {
           'duration: ' + escapeHtml(formatDurationShort(meeting.duration_s)) + ' - ' +
           'mode: ' + escapeHtml(meeting.mode === 'auto' ? 'Hand Up' : 'Direct') +
         '</div>' +
+        resumeButtonHtml +
       '</div>';
   }
 

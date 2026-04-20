@@ -38,6 +38,7 @@ const envConfig = readEnvFile([
   'WARROOM_ENABLED',
   'WARROOM_PORT',
   'WARROOM_TEXT_INPUT',
+  'WARROOM_RESUME_ENABLED',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -281,6 +282,17 @@ export const WARROOM_TEXT_INPUT = (() => {
     .trim();
   // Anything that is explicitly "0" or "false" disables; everything else
   // (including unset / "1" / "true" / "yes") enables.
+  return raw !== '0' && raw !== 'false' && raw !== 'no';
+})();
+
+// War Room archive resume (Slice 6). Default: enabled.
+// Set WARROOM_RESUME_ENABLED=0 to hide the "Resume" button and return
+// 403 from /api/warroom/meeting/:id/resume. The Python voice bridge
+// also checks this flag via warroom_resume.consume_resume_session().
+export const WARROOM_RESUME_ENABLED = (() => {
+  const raw = (process.env.WARROOM_RESUME_ENABLED || envConfig.WARROOM_RESUME_ENABLED || '')
+    .toLowerCase()
+    .trim();
   return raw !== '0' && raw !== 'false' && raw !== 'no';
 })();
 

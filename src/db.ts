@@ -2439,12 +2439,47 @@ export interface ResumePayload {
  * Build the resume payload for a meeting: every agent_session + the
  * last N turns per session (chronological ASC order for replay).
  *
- * RED stub — GREEN implements the real SELECTs.
+ * `session_id` may be '' if the row was persisted then cleared (we
+ * don't NULL it out because the column is NOT NULL) — callers treat
+ * empty as "no Claude Code anchor, use last_turns fallback".
  */
 export function getResumePayload(
-  _database: Database.Database,
-  _meeting_id: string,
-  _n: number = 5,
+  database: Database.Database,
+  meeting_id: string,
+  n: number = 5,
 ): ResumePayload {
-  throw new Error('not implemented — Slice 6 GREEN');
+  interface AgentSessionLite {
+    id: number;
+    agent_id: string;
+    session_id: string;
+  }
+  const sessions = database
+    .prepare(
+      `SELECT id, agent_id, session_id
+         FROM warroom_agent_sessions
+        WHERE meeting_id = ?
+        ORDER BY id ASC`,
+    )
+    .all(meeting_id) as AgentSessionLite[];
+
+  const out: ResumeSessionPayload[] = [];
+  for (const s of sessions) {
+    // Last N turns DESC, then reverse to chrono ASC in JS (cheap for N≤50).
+    const rows = database
+      .prepare(
+        `SELECT turn_number, user_message, agent_response, created_at
+           FROM warroom_turns
+          WHERE agent_session_id = ?
+          ORDER BY turn_number DESC
+          LIMIT ?`,
+      )
+      .all(s.id, n) as ResumeTurnRow[];
+    const last_turns = rows.reverse();
+    out.push({
+      agent_id: s.agent_id,
+      session_id: s.session_id || '',
+      last_turns,
+    });
+  }
+  return { meeting_id, sessions: out };
 }

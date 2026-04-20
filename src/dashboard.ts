@@ -65,14 +65,22 @@ import {
   clearCurrentMeetingId,
 } from './warroom-meeting-file.js';
 import { loadObsidianAgents } from './warroom-obsidian-agents.js';
-import { WARROOM_ENABLED, WARROOM_PORT, WARROOM_TEXT_INPUT } from './config.js';
+import {
+  WARROOM_ENABLED,
+  WARROOM_PORT,
+  WARROOM_TEXT_INPUT,
+  WARROOM_RESUME_ENABLED,
+} from './config.js';
 import {
   createWarRoomMeeting,
   endWarRoomMeeting,
   addWarRoomTranscript,
   getWarRoomMeetings,
   getWarRoomTranscript,
+  getResumePayload,
+  getDatabase,
 } from './db.js';
+import { writeResumeState, clearResumeState } from './warroom-resume-file.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 
@@ -262,7 +270,13 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   app.get('/warroom', (c) => {
     return c.html(
-      getWarRoomHtml(DASHBOARD_TOKEN, ALLOWED_CHAT_ID, WARROOM_PORT, WARROOM_TEXT_INPUT),
+      getWarRoomHtml(
+        DASHBOARD_TOKEN,
+        ALLOWED_CHAT_ID,
+        WARROOM_PORT,
+        WARROOM_TEXT_INPUT,
+        WARROOM_RESUME_ENABLED,
+      ),
     );
   });
 
@@ -476,6 +490,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     // caller didn't provide an id (defensive: stops stale ids leaking
     // into subsequent voice-bridge spawns after a meeting has ended).
     clearCurrentMeetingId();
+    // Slice 6 — also clear any pending resume state. Normally the
+    // Python consumer clears it one-shot on first read, but if the
+    // user clicked Resume and never spoke, the file can linger.
+    clearResumeState();
     return c.json({ ok: true });
   });
 
@@ -502,6 +520,39 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   app.get('/api/warroom/meeting/:id/transcript', (c) => {
     return c.json({ transcript: getWarRoomTranscript(c.req.param('id')) });
+  });
+
+  // Slice 6 — Resume a past meeting. Writes the payload to the shared
+  // resume file so the Pipecat voice server picks it up one-shot on
+  // the next voice-bridge spawn. The file is cleared on meeting/end
+  // as a safety net (see clearResumeState below).
+  app.post('/api/warroom/meeting/:id/resume', (c) => {
+    if (!WARROOM_RESUME_ENABLED) {
+      return c.json({ ok: false, error: 'resume disabled' }, 403);
+    }
+    const meetingId = c.req.param('id');
+    try {
+      const payload = getResumePayload(getDatabase(), meetingId);
+      writeResumeState({
+        meeting_id: payload.meeting_id,
+        sessions: payload.sessions.map((s) => ({
+          agent_id: s.agent_id,
+          session_id: s.session_id,
+          last_turns: s.last_turns.map((t) => ({
+            turn_number: t.turn_number,
+            user_message: t.user_message,
+            agent_response: t.agent_response,
+          })),
+        })),
+      });
+      return c.json({ ok: true, ...payload });
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message, meetingId },
+        'warroom: resume payload failed',
+      );
+      return c.json({ ok: false, error: 'resume failed' }, 500);
+    }
   });
 
   // ── End War Room routes ────────────────────────────────────────────

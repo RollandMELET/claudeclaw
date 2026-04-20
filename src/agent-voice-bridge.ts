@@ -59,6 +59,12 @@ const meetingId = parsed.meetingId;
 // Slice 5 — optional --cwd override for Obsidian agents. When set,
 // the Claude Code SDK runs with this cwd instead of PROJECT_ROOT/agents/<id>.
 const cwdOverride = parsed.cwd;
+// Slice 6 — optional resume. `resumeSession` is the preferred anchor
+// (Claude Code SDK session_id). `resumeTurns` is the fallback when the
+// anchor has been purged: we prepend a synthetic context block to the
+// message so the model sees prior exchanges before the new user turn.
+const resumeSessionId = parsed.resumeSession;
+const resumeTurnsRaw = parsed.resumeTurns;
 
 if (!message) {
   console.error(JSON.stringify({ response: null, usage: null, error: 'No --message provided' }));
@@ -154,13 +160,51 @@ async function main() {
     const mcpServerNames = Object.keys(mcpServers);
     process.stderr.write(`[voice-bridge] agent=${agentId} mcpServers=${JSON.stringify(mcpServerNames)}\n`);
 
-    // Resume session if one exists for this chat+agent
-    const sessionId = getSession(chatId, agentId) ?? undefined;
+    // Resume session if one exists for this chat+agent. Slice 6 — the
+    // explicit --resume-session flag (from Python, read out of the
+    // shared resume file) wins over the per-chat session so a user who
+    // clicks "Resume" on a past meeting reaches THAT session, not the
+    // daemon's default continuation.
+    const sessionId = resumeSessionId || getSession(chatId, agentId) || undefined;
+    if (resumeSessionId) {
+      process.stderr.write(`[voice-bridge] resume: using explicit session_id=${resumeSessionId}\n`);
+    }
 
     // Build memory context
     const { contextText: memCtx } = await buildMemoryContext(chatId, message, agentId);
     const parts: string[] = [];
     if (memCtx) parts.push(memCtx);
+
+    // Slice 6 fallback — when resume_session is absent but resume_turns
+    // is present, prepend the prior exchanges as a synthetic context
+    // block. The Claude Code SDK does not expose a native "context
+    // prefix" API (query() accepts `resume: sessionId` only), so we
+    // embed the transcript in the user message itself. This is a
+    // best-effort recall — the model sees the text but won't have the
+    // tool-use / internal-state of the original session.
+    if (!resumeSessionId && resumeTurnsRaw) {
+      try {
+        interface PriorTurn {
+          turn_number?: number;
+          user_message?: string | null;
+          agent_response?: string | null;
+        }
+        const priorTurns = JSON.parse(resumeTurnsRaw) as PriorTurn[];
+        if (Array.isArray(priorTurns) && priorTurns.length) {
+          const lines: string[] = [
+            '[Resume context from a prior meeting — summary only, no tools were preserved. Treat as read-only background.]',
+          ];
+          for (const t of priorTurns) {
+            if (t.user_message) lines.push(`User: ${String(t.user_message)}`);
+            if (t.agent_response) lines.push(`Agent: ${String(t.agent_response)}`);
+          }
+          parts.push(lines.join('\n'));
+          process.stderr.write(`[voice-bridge] resume: injected ${priorTurns.length} prior turn(s) as context prefix\n`);
+        }
+      } catch (err) {
+        process.stderr.write(`[voice-bridge] resume-turns parse failed: ${err}\n`);
+      }
+    }
 
     // Add voice-meeting context hint. Quick mode is stricter because
     // Gemini Live will read the answer verbatim over voice —

@@ -74,7 +74,7 @@ async function stubBackend(
   });
 
   // Resume endpoint — records the hit and returns a realistic payload.
-  await page.route('**/api/warroom/meeting/*/resume', async (route: Route) => {
+  await page.route(/\/api\/warroom\/meeting\/[^/?#]+\/resume/, async (route: Route) => {
     const req = route.request();
     const body = req.postData() || '';
     recorded.push({ url: req.url(), body, method: req.method() });

@@ -140,6 +140,14 @@ export interface VoiceBridgeArgs {
   quickMode: boolean;
   meetingId?: string;
   cwd?: string;
+  /** Slice 6 — Claude Code session id to resume on this turn. */
+  resumeSession?: string;
+  /**
+   * Slice 6 fallback — JSON string of prior turns (shape:
+   * `[{turn_number, user_message, agent_response}, ...]`) injected as
+   * a context prefix when the session_id anchor is unavailable.
+   */
+  resumeTurns?: string;
 }
 
 /**
@@ -162,6 +170,8 @@ export function parseVoiceBridgeArgs(argv: string[]): VoiceBridgeArgs {
     if (flag === '--chat-id' && next) { out.chatId = next; i++; continue; }
     if (flag === '--meeting-id' && next) { out.meetingId = next; i++; continue; }
     if (flag === '--cwd' && next) { out.cwd = next; i++; continue; }
+    if (flag === '--resume-session' && next) { out.resumeSession = next; i++; continue; }
+    if (flag === '--resume-turns' && next) { out.resumeTurns = next; i++; continue; }
     if (flag === '--quick') { out.quickMode = true; continue; }
   }
   return out;

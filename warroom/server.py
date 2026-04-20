@@ -524,6 +524,35 @@ async def answer_as_agent_handler(params):
     if obsidian_cwd:
         cmd.extend(["--cwd", obsidian_cwd])
 
+    # Slice 6 — consume any pending resume state for this agent.
+    # One-shot: the file is cleared on the first successful read.
+    # WARROOM_RESUME_ENABLED=0 makes this a no-op (see warroom_resume).
+    try:
+        from warroom_resume import consume_resume_session
+
+        resume_entry = consume_resume_session(agent)
+    except Exception as exc:
+        logger.warning("warroom: resume consume failed: %s", exc)
+        resume_entry = None
+    if resume_entry:
+        sess_id = resume_entry.get("session_id")
+        if isinstance(sess_id, str) and sess_id:
+            cmd.extend(["--resume-session", sess_id])
+            logger.info("warroom: resume via session_id=%s for agent=%s", sess_id, agent)
+        last_turns = resume_entry.get("last_turns")
+        if isinstance(last_turns, list) and last_turns and not (isinstance(sess_id, str) and sess_id):
+            # Fallback path: no Claude Code anchor, inject the last
+            # turns as a context prefix (see agent-voice-bridge for
+            # the synthetic-transcript format).
+            try:
+                cmd.extend(["--resume-turns", json.dumps(last_turns, ensure_ascii=False)])
+                logger.info(
+                    "warroom: resume via last_turns fallback (%d turns) for agent=%s",
+                    len(last_turns), agent,
+                )
+            except Exception as exc:
+                logger.warning("warroom: resume-turns json serialize failed: %s", exc)
+
     code, out, err = await _run_subprocess(cmd, timeout=ANSWER_TIMEOUT_SEC)
 
     if code != 0:
