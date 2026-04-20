@@ -16,9 +16,18 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs';
 import yaml from 'js-yaml';
 import { readEnvFile } from './env.js';
-import { initDatabase, getSession, setSession } from './db.js';
+import {
+  initDatabase,
+  getSession,
+  setSession,
+  getDatabase,
+  createWarRoomAgentSession,
+  getWarRoomAgentSession,
+  addWarRoomTurn,
+} from './db.js';
 import { buildMemoryContext } from './memory.js';
 import { loadMcpServers } from './agent.js';
+import { parseVoiceBridgeArgs } from './warroom-obsidian-agents.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -32,28 +41,30 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-// Parse CLI args
-const args = process.argv.slice(2);
-let agentId = 'main';
-let message = '';
-let chatId = 'warroom';
-let quickMode = false;
-
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--agent' && args[i + 1]) {
-    agentId = args[++i];
-  } else if (args[i] === '--message' && args[i + 1]) {
-    message = args[++i];
-  } else if (args[i] === '--chat-id' && args[i + 1]) {
-    chatId = args[++i];
-  } else if (args[i] === '--quick') {
-    // Quick mode: cap turns hard, used by warroom auto-routing where
-    // voice latency matters more than thoroughness. The agent still has
-    // MCP access but can only do ~1 tool call round-trip before it has
-    // to answer.
-    quickMode = true;
-  }
-}
+// Parse CLI args via the pure parser (Slice 5). `--cwd` is the new
+// flag, used when spawning Obsidian-backed agents whose project
+// folder lives outside PROJECT_ROOT/agents/. Quick mode: cap turns
+// hard, used by warroom auto-routing where voice latency matters
+// more than thoroughness. The agent still has MCP access but can
+// only do ~1 tool call round-trip before it has to answer.
+const parsed = parseVoiceBridgeArgs(process.argv.slice(2));
+const agentId = parsed.agentId;
+const message = parsed.message;
+const chatId = parsed.chatId;
+const quickMode = parsed.quickMode;
+// Slice 2 — optional meeting_id. When present, writes rich session/turn
+// rows to warroom_agent_sessions + warroom_turns in addition to the
+// legacy warroom_transcript. Absent = legacy behavior, no new writes.
+const meetingId = parsed.meetingId;
+// Slice 5 — optional --cwd override for Obsidian agents. When set,
+// the Claude Code SDK runs with this cwd instead of PROJECT_ROOT/agents/<id>.
+const cwdOverride = parsed.cwd;
+// Slice 6 — optional resume. `resumeSession` is the preferred anchor
+// (Claude Code SDK session_id). `resumeTurns` is the fallback when the
+// anchor has been purged: we prepend a synthetic context block to the
+// message so the model sees prior exchanges before the new user turn.
+const resumeSessionId = parsed.resumeSession;
+const resumeTurnsRaw = parsed.resumeTurns;
 
 if (!message) {
   console.error(JSON.stringify({ response: null, usage: null, error: 'No --message provided' }));
@@ -103,13 +114,26 @@ async function main() {
       throw new Error(`Invalid agent ID: ${agentId}`);
     }
 
-    // Resolve agent directory and verify it's within the project
-    const agentDir = agentId === 'main'
-      ? PROJECT_ROOT
-      : path.join(PROJECT_ROOT, 'agents', agentId);
-    const resolved = path.resolve(agentDir);
-    if (!resolved.startsWith(path.resolve(PROJECT_ROOT) + path.sep) && resolved !== path.resolve(PROJECT_ROOT)) {
-      throw new Error(`Agent path outside project: ${resolved}`);
+    // Resolve agent working directory:
+    //   - Slice 5: if --cwd is set (Obsidian agent), trust the caller
+    //     (warroom/server.py resolves it from config/obsidian-agents.yaml
+    //     which already validated the path is inside vault_root).
+    //   - Otherwise: PROJECT_ROOT for 'main', PROJECT_ROOT/agents/<id>
+    //     for the 6 directory-backed agents (with the usual guard).
+    let agentDir: string;
+    if (cwdOverride) {
+      agentDir = path.resolve(cwdOverride);
+      if (!fs.existsSync(agentDir)) {
+        throw new Error(`--cwd path does not exist: ${agentDir}`);
+      }
+    } else {
+      agentDir = agentId === 'main'
+        ? PROJECT_ROOT
+        : path.join(PROJECT_ROOT, 'agents', agentId);
+      const resolved = path.resolve(agentDir);
+      if (!resolved.startsWith(path.resolve(PROJECT_ROOT) + path.sep) && resolved !== path.resolve(PROJECT_ROOT)) {
+        throw new Error(`Agent path outside project: ${resolved}`);
+      }
     }
 
     // Read the agent's MCP allowlist from its agent.yaml (if present). The
@@ -136,13 +160,51 @@ async function main() {
     const mcpServerNames = Object.keys(mcpServers);
     process.stderr.write(`[voice-bridge] agent=${agentId} mcpServers=${JSON.stringify(mcpServerNames)}\n`);
 
-    // Resume session if one exists for this chat+agent
-    const sessionId = getSession(chatId, agentId) ?? undefined;
+    // Resume session if one exists for this chat+agent. Slice 6 — the
+    // explicit --resume-session flag (from Python, read out of the
+    // shared resume file) wins over the per-chat session so a user who
+    // clicks "Resume" on a past meeting reaches THAT session, not the
+    // daemon's default continuation.
+    const sessionId = resumeSessionId || getSession(chatId, agentId) || undefined;
+    if (resumeSessionId) {
+      process.stderr.write(`[voice-bridge] resume: using explicit session_id=${resumeSessionId}\n`);
+    }
 
     // Build memory context
     const { contextText: memCtx } = await buildMemoryContext(chatId, message, agentId);
     const parts: string[] = [];
     if (memCtx) parts.push(memCtx);
+
+    // Slice 6 fallback — when resume_session is absent but resume_turns
+    // is present, prepend the prior exchanges as a synthetic context
+    // block. The Claude Code SDK does not expose a native "context
+    // prefix" API (query() accepts `resume: sessionId` only), so we
+    // embed the transcript in the user message itself. This is a
+    // best-effort recall — the model sees the text but won't have the
+    // tool-use / internal-state of the original session.
+    if (!resumeSessionId && resumeTurnsRaw) {
+      try {
+        interface PriorTurn {
+          turn_number?: number;
+          user_message?: string | null;
+          agent_response?: string | null;
+        }
+        const priorTurns = JSON.parse(resumeTurnsRaw) as PriorTurn[];
+        if (Array.isArray(priorTurns) && priorTurns.length) {
+          const lines: string[] = [
+            '[Resume context from a prior meeting — summary only, no tools were preserved. Treat as read-only background.]',
+          ];
+          for (const t of priorTurns) {
+            if (t.user_message) lines.push(`User: ${String(t.user_message)}`);
+            if (t.agent_response) lines.push(`Agent: ${String(t.agent_response)}`);
+          }
+          parts.push(lines.join('\n'));
+          process.stderr.write(`[voice-bridge] resume: injected ${priorTurns.length} prior turn(s) as context prefix\n`);
+        }
+      } catch (err) {
+        process.stderr.write(`[voice-bridge] resume-turns parse failed: ${err}\n`);
+      }
+    }
 
     // Add voice-meeting context hint. Quick mode is stricter because
     // Gemini Live will read the answer verbatim over voice —
@@ -158,6 +220,10 @@ async function main() {
     let resultText: string | null = null;
     let newSessionId: string | undefined;
     let usage: Record<string, number> = {};
+    // Slice 2 — capture the SDK message UUID (if exposed) for turn persistence.
+    let messageUuid: string | null = null;
+    let didCompact = false;
+    const turnStartMs = Date.now();
 
     for await (const event of query({
       prompt: singleTurn(fullMessage),
@@ -181,6 +247,18 @@ async function main() {
         newSessionId = ev['session_id'] as string;
       }
 
+      if (ev['type'] === 'system' && ev['subtype'] === 'compact_boundary') {
+        didCompact = true;
+      }
+
+      if (ev['type'] === 'assistant') {
+        // The SDK surfaces the assistant message UUID in `message.id`.
+        // Keep the latest one — it's the anchor for resumption forks.
+        const msg = ev['message'] as Record<string, unknown> | undefined;
+        const id = msg?.['id'];
+        if (typeof id === 'string') messageUuid = id;
+      }
+
       if (ev['type'] === 'result') {
         resultText = (ev['result'] as string | null | undefined) ?? null;
         const evUsage = ev['usage'] as Record<string, number> | undefined;
@@ -197,6 +275,47 @@ async function main() {
     // Save session for continuity
     if (newSessionId) {
       setSession(chatId, newSessionId, agentId);
+    }
+
+    // Slice 2 — double-write to warroom_agent_sessions + warroom_turns
+    // when a meeting context is provided. The legacy transcript write
+    // stays in dashboard.ts (POST /api/warroom/meeting/transcript) so we
+    // don't touch the on-screen transcript path.
+    if (meetingId && newSessionId) {
+      try {
+        const database = getDatabase();
+        // Reuse the existing agent_session row if one already exists for
+        // this (meeting, agent) — otherwise create it. This keeps
+        // `turn_number` auto-increment scoped to a single session across
+        // all turns of a meeting.
+        const agentSession =
+          getWarRoomAgentSession(database, meetingId, agentId) ??
+          createWarRoomAgentSession(database, {
+            meeting_id: meetingId,
+            agent_id: agentId,
+            session_id: newSessionId,
+          });
+        addWarRoomTurn(database, {
+          agent_session_id: agentSession.id,
+          meeting_id: meetingId,
+          input_source: 'voice',
+          user_message: message,
+          agent_response: resultText,
+          claude_message_uuid: messageUuid,
+          input_tokens: usage['input_tokens'] ?? 0,
+          output_tokens: usage['output_tokens'] ?? 0,
+          cost_usd: usage['cost_usd'] ?? 0,
+          did_compact: didCompact,
+          duration_ms: Date.now() - turnStartMs,
+        });
+      } catch (err) {
+        // Non-fatal: session-store write failure must not break the
+        // voice response path. The legacy transcript write (in
+        // dashboard.ts) is unaffected.
+        process.stderr.write(
+          `[voice-bridge] warroom session-store write failed: ${err}\n`,
+        );
+      }
     }
 
     console.log(JSON.stringify({

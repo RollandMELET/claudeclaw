@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:watch": "playwright test --ui",
     "migrate": "tsx scripts/migrate.ts",
     "setup": "tsx scripts/setup.ts",
     "status": "tsx scripts/status.ts",
@@ -36,6 +38,7 @@
   "devDependencies": {
     "@pipecat-ai/client-js": "^1.7.0",
     "@pipecat-ai/websocket-transport": "^1.6.2",
+    "@playwright/test": "^1.49.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.0",

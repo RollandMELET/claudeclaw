@@ -1,0 +1,28 @@
+# Slice 5 — Obsidian agents wrapper
+#
+# Copy this file to config/obsidian-agents.yaml (gitignored) and edit
+# the paths to match your local Obsidian vault. The War Room loads
+# this config at startup:
+#   - src/warroom-obsidian-agents.ts → GET /api/warroom/agents (sidebar)
+#   - warroom/obsidian_loader.py    → /tmp/warroom-agents.json (persona fallback)
+#
+# Each entry resolves vault_root/project_folder to an absolute path and
+# that path becomes the Claude Code SDK's `cwd` when the agent answers
+# via the voice bridge. The SDK reads CLAUDE.md / .claude/skills / MCPs
+# from that directory the same way `claude` does when you cd into it.
+#
+# Validation (loader-enforced, never raises):
+#   * vault_root + project_folder must exist on disk.
+#   * project_folder cannot escape vault_root (path traversal blocked).
+#   * Invalid entries are skipped with a warning; the voice path stays up.
+
+obsidian_agents:
+  # Pilot agent — edit vault_root to match your own install.
+  rorworld-warroom:
+    name: RoRworld Admin
+    description: Administration RoRworld, compta, refacturation GS1
+    vault_root: ~/Library/CloudStorage/GoogleDrive-rm@360sc.io/Mon Drive/OBSIDIAN/CHATTERS
+    project_folder: 002 - Projets/SOCIETE/RoRworld
+    voice: kokoro
+    avatar: rorworld.png
+    model: sonnet

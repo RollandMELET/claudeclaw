@@ -736,6 +736,40 @@ All endpoints require `?token=YOUR_TOKEN`. Per-user endpoints also need `&chatId
 
 ---
 
+## War Room (voice + text meetings)
+
+La War Room est une salle de réunion virtuelle où tu parles, ou tu tapes, avec un ou plusieurs agents IA. Démarre une réunion, pinne un agent, et pose ta question. L'agent répond vocalement via Gemini Live. Tu peux aussi injecter des messages texte à la volée pendant la réunion.
+
+Accès : `/warroom?token=...` sur le dashboard. Voir [le guide complet](docs/warroom-v2-user-guide.md) pour le pas à pas.
+
+### Ce que tu peux faire
+
+- **Parler à un agent**. Start Meeting, puis parle. L'agent répond en voix.
+- **Taper un message en cours de réunion**. Le champ texte à droite du micro injecte le texte comme un tour utilisateur ; l'agent répond à l'oral.
+- **Consulter les réunions passées**. Le bouton Past Meetings dans le header ouvre l'archive avec la liste des réunions et leur transcript timestampé.
+- **Reprendre une réunion passée**. Click Resume sur une réunion archivée ; la prochaine question reprend le fil exact, avec le contexte Claude Code d'origine (session_id) ou une reconstruction à partir des derniers tours.
+- **Brancher un dossier Obsidian comme agent**. Via `config/obsidian-agents.yaml` ou le formulaire de Settings. Le SDK Claude Code tourne dans le dossier du vault, donc il voit le CLAUDE.md, les skills, les MCPs de ce projet.
+- **Configurer le roster**. L'icône engrenage dans le header ouvre Settings : activer/désactiver chaque agent, réorganiser la sidebar, ajouter un agent Obsidian.
+
+### Fichiers de config
+
+| Fichier | Rôle | Commité ? |
+|---------|------|-----------|
+| `config/obsidian-agents.example.yaml` | Template pour ajouter des agents Obsidian | oui |
+| `config/obsidian-agents.yaml` | Agents Obsidian actifs, chemins locaux | non (gitignored) |
+| `config/user-preferences.yaml.example` | Template pour les préférences utilisateur | oui |
+| `config/user-preferences.yaml` | État persistant du panneau Settings | non (gitignored) |
+
+### Feature flags
+
+Tous activés par défaut. Mets-les à `0`, `false` ou `no` dans `.env` pour les désactiver.
+
+- `WARROOM_TEXT_INPUT` : champ texte dans la barre de contrôles + handler Python.
+- `WARROOM_RESUME_ENABLED` : bouton Resume dans l'archive + endpoint POST.
+- `WARROOM_SETTINGS_ENABLED` : icône engrenage + endpoints settings.
+
+---
+
 ## Slack (optional)
 
 Requires a Slack User OAuth Token. This connects to your workspace so ClaudeClaw can read and send messages on your behalf.

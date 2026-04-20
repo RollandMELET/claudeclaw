@@ -205,25 +205,174 @@ def print_ready(port: int, mode: str):
 NODE_BIN = os.environ.get("NODE_BIN") or shutil.which("node") or "node"
 MISSION_CLI = PROJECT_ROOT / "dist" / "mission-cli.js"
 VOICE_BRIDGE = PROJECT_ROOT / "dist" / "agent-voice-bridge.js"
-# Load agent roster dynamically from the file Node writes on startup.
-# Falls back to the default 5 if the file doesn't exist.
-def _load_agent_roster():
-    roster_path = Path("/tmp/warroom-agents.json")
-    try:
-        if roster_path.exists():
-            agents = json.loads(roster_path.read_text())
-            return {a["id"] for a in agents}
-    except Exception as exc:
-        logger.warning("Could not read agent roster from %s: %s", roster_path, exc)
-    return {"main", "research", "comms", "content", "ops", "rc2", "qonto", "hcom"}
 
-VALID_AGENTS = _load_agent_roster()
+# Slice 5 — Obsidian agents: at boot, merge any agents declared in
+# config/obsidian-agents.yaml into the shared roster so the existing
+# personas._generate_persona() fallback picks them up + VALID_AGENTS
+# accepts them in answer_as_agent_handler validation.
+OBSIDIAN_YAML = PROJECT_ROOT / "config" / "obsidian-agents.yaml"
+# Keep the last-loaded Obsidian agent list in memory so the voice-bridge
+# spawner (_cwd_for_agent) can resolve --cwd without re-parsing YAML.
+_OBSIDIAN_AGENTS_CACHE: list[dict[str, object]] = []
+
+
+def _rebuild_roster_and_valid_agents() -> set[str]:
+    """Merge the 8 hardcoded agents + Obsidian YAML entries into
+    /tmp/warroom-agents.json and return the VALID_AGENTS set.
+
+    Called once at module import time. Idempotent — safe to call again
+    if we ever support hot-reload.
+    """
+    # The 8 hardcoded / directory-backed agents (the 6 shipped dirs +
+    # main + hcom for legacy). Each carries the minimum fields
+    # personas._generate_persona() reads (id + name + description).
+    base = [
+        {"id": "main", "name": "RC1 (Main)", "description": "Orchestrateur principal, triage, comms externes"},
+        {"id": "research", "name": "Research", "description": "Grand Maester. Deep web research, competitive intel."},
+        {"id": "comms", "name": "Comms", "description": "Master of Whisperers. Email, Slack, Telegram, customer comms."},
+        {"id": "content", "name": "Content", "description": "Royal Bard. Writing, YouTube scripts, LinkedIn, blog copy."},
+        {"id": "ops", "name": "Ops", "description": "Master of War. Calendar, scheduling, cron, automations."},
+        {"id": "rc2", "name": "RC2", "description": "Dev agent interne (fork)."},
+        {"id": "qonto", "name": "Qonto", "description": "Treasurer. RorWorld/GS1 finances via Qonto API."},
+        {"id": "hcom", "name": "HCOM", "description": "Inter-agent comms daemon."},
+    ]
+
+    obs_agents: list[dict[str, object]] = []
+    try:
+        from obsidian_loader import load_agents as _load_obs
+
+        obs_agents = _load_obs(str(OBSIDIAN_YAML))
+    except Exception as exc:
+        logger.warning("warroom: Obsidian load failed: %s", exc)
+
+    # Base roster = directory-backed (8) + Obsidian YAML entries.
+    combined: list[dict[str, object]] = list(base)
+    seen = {a["id"] for a in combined}
+    for obs in obs_agents:
+        aid = obs.get("id")
+        if isinstance(aid, str) and aid not in seen:
+            combined.append(obs)
+            seen.add(aid)
+
+    # Slice 7 — apply user preferences (disable/reorder/add) on top.
+    prefs: dict[str, object] = {"disabled_agents": [], "order": [], "added_obsidian_agents": []}
+    prefs_path = os.environ.get(
+        "WARROOM_USER_PREFS_FILE",
+        str(PROJECT_ROOT / "config" / "user-preferences.yaml"),
+    )
+    try:
+        from config_service import (
+            load_agent_config as _load_prefs,
+            apply_roster_preferences as _apply_prefs,
+        )
+
+        prefs = _load_prefs(prefs_path)
+        final_roster = _apply_prefs(combined, prefs)
+        # Expand added Obsidian agents into cwd entries so _cwd_for_agent
+        # can find them at spawn time. We resolve each added entry's
+        # vault_root/project_folder through os.path (mirroring the
+        # TypeScript loader) — invalid entries have already been filtered
+        # by validateNewObsidianInput on POST, but defend here too.
+        added = prefs.get("added_obsidian_agents") or []
+        if isinstance(added, list):
+            for add in added:
+                if not isinstance(add, dict):
+                    continue
+                vault_root = add.get("vault_root")
+                project_folder = add.get("project_folder")
+                if not isinstance(vault_root, str) or not isinstance(project_folder, str):
+                    continue
+                try:
+                    vault_resolved = Path(os.path.expanduser(vault_root)).resolve()
+                    candidate = (vault_resolved / project_folder).resolve()
+                    candidate.relative_to(vault_resolved)
+                    if not candidate.is_dir():
+                        continue
+                    # Merge the cwd into the entry (used by _cwd_for_agent).
+                    add["cwd"] = str(candidate)
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("warroom: user preferences apply failed: %s", exc)
+        final_roster = combined
+
+    # Write the final roster to /tmp/warroom-agents.json.
+    try:
+        Path("/tmp/warroom-agents.json").write_text(
+            json.dumps(final_roster, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as werr:
+        logger.warning("warroom: roster write failed: %s", werr)
+
+    if obs_agents:
+        logger.info(
+            "warroom: roster built (base=%d, obsidian=%d, final=%d)",
+            len(base), len(obs_agents), len(final_roster),
+        )
+
+    _OBSIDIAN_AGENTS_CACHE.clear()
+    _OBSIDIAN_AGENTS_CACHE.extend(obs_agents)
+    # Also cache added_obsidian_agents so _cwd_for_agent can resolve
+    # them (they carry their own 'cwd' once resolved above).
+    added = prefs.get("added_obsidian_agents") if isinstance(prefs, dict) else None
+    if isinstance(added, list):
+        for add in added:
+            if isinstance(add, dict) and isinstance(add.get("id"), str) and add.get("cwd"):
+                _OBSIDIAN_AGENTS_CACHE.append(add)
+
+    valid = {a["id"] for a in final_roster if isinstance(a.get("id"), str)}
+    return valid
+
+
+VALID_AGENTS = _rebuild_roster_and_valid_agents()
+
+
+def _cwd_for_agent(agent_id: str) -> str | None:
+    """Return the Obsidian-backed cwd for `agent_id`, or None for
+    regular directory-backed agents. Used to forward --cwd to
+    agent-voice-bridge at spawn time.
+    """
+    for a in _OBSIDIAN_AGENTS_CACHE:
+        if a.get("id") == agent_id:
+            cwd = a.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                return cwd
+    return None
 
 # Chat id used for agent-voice-bridge session persistence. The warroom is
 # a single shared meeting, not per-chat, so we use a fixed id unless the
 # environment provides an override (e.g. for running two warroom instances
 # side by side during testing).
 WARROOM_CHAT_ID = os.environ.get("WARROOM_CHAT_ID", "warroom")
+
+
+# Slice 2.1 — Shared file the dashboard (Node) writes on POST
+# /api/warroom/meeting/{start,end}. We read it before each voice-bridge
+# spawn so the session store (Slice 2) can bind turns to the right
+# meeting. Same pattern as /tmp/warroom-agents.json.
+#
+# Path override mirrors the TypeScript side (WARROOM_MEETING_FILE env).
+def _current_meeting_id() -> str | None:
+    """Return the active meeting id written by dashboard.ts, or None.
+
+    Returns None if the file is missing, empty, whitespace-only, or
+    unreadable. Never raises — voice path must not break on I/O errors.
+    """
+    path = os.environ.get(
+        "WARROOM_MEETING_FILE", "/tmp/warroom-current-meeting.txt"
+    )
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            value = fh.read().strip()
+        return value or None
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning(
+            "warroom: could not read current meeting file %s: %s", path, exc
+        )
+        return None
 
 # Timeout for synchronous answer_as_agent invocations. Voice UX expects
 # answers back within a few seconds. 25s is the hard ceiling — past that
@@ -413,6 +562,51 @@ async def answer_as_agent_handler(params):
         "--chat-id", WARROOM_CHAT_ID,
         "--message", question,
     ]
+
+    # Slice 2.1 — forward the current meeting id (if any) so the bridge
+    # can double-write to warroom_agent_sessions + warroom_turns. When
+    # no meeting is active, the bridge falls back to legacy behavior.
+    meeting_id = _current_meeting_id()
+    if meeting_id:
+        cmd.extend(["--meeting-id", meeting_id])
+
+    # Slice 5 — forward --cwd for Obsidian-backed agents. The cwd was
+    # already validated to be inside vault_root by obsidian_loader, so
+    # we just pass it through. Directory-backed agents (the 6 shipped
+    # dirs) don't get a --cwd and the bridge defaults to PROJECT_ROOT/agents/<id>.
+    obsidian_cwd = _cwd_for_agent(agent)
+    if obsidian_cwd:
+        cmd.extend(["--cwd", obsidian_cwd])
+
+    # Slice 6 — consume any pending resume state for this agent.
+    # One-shot: the file is cleared on the first successful read.
+    # WARROOM_RESUME_ENABLED=0 makes this a no-op (see warroom_resume).
+    try:
+        from warroom_resume import consume_resume_session
+
+        resume_entry = consume_resume_session(agent)
+    except Exception as exc:
+        logger.warning("warroom: resume consume failed: %s", exc)
+        resume_entry = None
+    if resume_entry:
+        sess_id = resume_entry.get("session_id")
+        if isinstance(sess_id, str) and sess_id:
+            cmd.extend(["--resume-session", sess_id])
+            logger.info("warroom: resume via session_id=%s for agent=%s", sess_id, agent)
+        last_turns = resume_entry.get("last_turns")
+        if isinstance(last_turns, list) and last_turns and not (isinstance(sess_id, str) and sess_id):
+            # Fallback path: no Claude Code anchor, inject the last
+            # turns as a context prefix (see agent-voice-bridge for
+            # the synthetic-transcript format).
+            try:
+                cmd.extend(["--resume-turns", json.dumps(last_turns, ensure_ascii=False)])
+                logger.info(
+                    "warroom: resume via last_turns fallback (%d turns) for agent=%s",
+                    len(last_turns), agent,
+                )
+            except Exception as exc:
+                logger.warning("warroom: resume-turns json serialize failed: %s", exc)
+
     code, out, err = await _run_subprocess(cmd, timeout=ANSWER_TIMEOUT_SEC)
 
     if code != 0:
@@ -623,6 +817,11 @@ async def run_live_mode():
     # even for main (Charon). Pipecat only warns about deprecation, not
     # actively breaks.
     live_kwargs["voice_id"] = voice
+    # Hand Up mode spawns a Claude Code SDK subprocess via answer_as_agent;
+    # cold start plus OAuth refresh commonly exceeds Pipecat's 10s default
+    # tool timeout, which aborts the function call and collapses the pipeline.
+    # 30s covers typical cold-start latency.
+    live_kwargs["function_call_timeout_secs"] = 30
 
     llm = GeminiLiveLLMService(**live_kwargs)
 
@@ -665,6 +864,28 @@ async def run_live_mode():
         idle_timeout_secs=None,
         cancel_on_idle_timeout=False,
     )
+
+    # Slice 4 — hybrid text input. Register an RTVI client-message
+    # handler so the browser can inject text turns into the live
+    # Gemini conversation alongside voice input.
+    try:
+        from warroom_text_input import handle_text_input_message
+
+        @task.rtvi.event_handler("on_client_message")
+        async def _on_client_message(rtvi, message):
+            # handle_text_input_message is a no-op when:
+            #   - WARROOM_TEXT_INPUT=0 is set in env,
+            #   - message.type is not "text-input",
+            #   - or data.text is empty/whitespace.
+            # So the voice pipeline is unaffected by every other
+            # RTVI client message pipecat already dispatches.
+            await handle_text_input_message(task, message)
+
+        logger.info("warroom: registered on_client_message handler (text-input routing)")
+    except Exception as exc:
+        # Non-fatal: if RTVI wiring breaks (unlikely, PipelineTask
+        # enables it by default), the voice path still works.
+        logger.warning("warroom: could not register text-input handler: %s", exc)
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):

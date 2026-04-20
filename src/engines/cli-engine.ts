@@ -90,6 +90,9 @@ export class CliEngine implements Engine {
     let lastCallCacheRead = 0;
     let lastCallInputTokens = 0;
     let streamedText = '';
+    // Slice 2 — latest assistant message UUID observed during the turn.
+    // Used by War Room v2 session store as a fork anchor.
+    let lastMessageUuid: string | null = null;
 
     for await (const event of query({
       prompt: singleTurn(message),
@@ -136,6 +139,10 @@ export class CliEngine implements Engine {
         const callInputTokens = msgUsage?.['input_tokens'] ?? 0;
         if (callCacheRead > 0) lastCallCacheRead = callCacheRead;
         if (callInputTokens > 0) lastCallInputTokens = callInputTokens;
+        // Capture the assistant message UUID (Slice 2). The SDK shape is
+        // `{ message: { id: 'msg_...', ... } }`. Ignore non-string values.
+        const msgId = msg?.['id'];
+        if (typeof msgId === 'string') lastMessageUuid = msgId;
 
         if (options.emitProgress) {
           const content = msg?.['content'] as
@@ -231,7 +238,7 @@ export class CliEngine implements Engine {
           { hasResult: !!text, subtype: ev['subtype'] },
           'Agent result received',
         );
-        yield { type: 'result', text, usage };
+        yield { type: 'result', text, usage, messageUuid: lastMessageUuid };
         return;
       }
     }

@@ -42,7 +42,8 @@ CLAUDE.md
 agents/*/agent.yaml
 agents/*/CLAUDE.md
 
-# War Room Python venv (created on host, not versioned)
+# War Room Python venv (created on host, not versioned — can be a symlink)
+warroom/.venv
 warroom/.venv/
 warroom/__pycache__/
 warroom/*.pyc
@@ -51,3 +52,15 @@ warroom/*.pyc
 outputs/
 wiki/
 .playwright-cli/
+
+# Playwright e2e reports and traces (auto-generated, not versioned)
+playwright-report/
+test-results/
+
+# Slice 5 — Obsidian agents config (local paths, not versioned).
+# Commit only config/obsidian-agents.example.yaml as a template.
+config/obsidian-agents.yaml
+
+# Slice 7 — War Room user preferences (settings panel state).
+# Commit only config/user-preferences.yaml.example as a template.
+config/user-preferences.yaml

@@ -52,13 +52,22 @@ export interface EngineProgressEvent {
  *
  * Errors are thrown (not yielded) to match the current CLI behavior:
  * `runAgent()` already handles abort detection + re-throw in its catch block.
+ *
+ * `messageUuid` (Slice 2) — the most recent assistant `message.id` observed
+ * during the turn. Optional; consumers that don't need it (CLI bot) ignore
+ * it. The War Room v2 session store uses it as a fork anchor.
  */
 export type EngineEvent =
   | { type: 'init'; sessionId: string }
   | { type: 'progress'; event: EngineProgressEvent }
   | { type: 'stream_text'; accumulatedText: string }
   | { type: 'compact'; preCompactTokens: number | null }
-  | { type: 'result'; text: string | null; usage: EngineUsageInfo };
+  | {
+      type: 'result';
+      text: string | null;
+      usage: EngineUsageInfo;
+      messageUuid?: string | null;
+    };
 
 /** Pluggable agent backend. Implementations: CliEngine, SdkEngine (future). */
 export interface Engine {

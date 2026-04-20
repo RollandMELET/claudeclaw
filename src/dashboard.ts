@@ -59,14 +59,38 @@ import {
 import { processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
 import { getWarRoomHtml } from './warroom-html.js';
-import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
+import { validateTranscriptSpeaker } from './warroom-transcript-validator.js';
+import {
+  writeCurrentMeetingId,
+  clearCurrentMeetingId,
+} from './warroom-meeting-file.js';
+import { loadObsidianAgents } from './warroom-obsidian-agents.js';
+import {
+  loadUserPreferences,
+  saveUserPreferences,
+  applyUserPreferences,
+  validateNewObsidianInput,
+  type UserPreferences,
+  type RosterEntry,
+} from './warroom-user-preferences.js';
+import {
+  WARROOM_ENABLED,
+  WARROOM_PORT,
+  WARROOM_TEXT_INPUT,
+  WARROOM_RESUME_ENABLED,
+  WARROOM_SETTINGS_ENABLED,
+  WARROOM_USER_PREFS_FILE,
+} from './config.js';
 import {
   createWarRoomMeeting,
   endWarRoomMeeting,
   addWarRoomTranscript,
   getWarRoomMeetings,
   getWarRoomTranscript,
+  getResumePayload,
+  getDatabase,
 } from './db.js';
+import { writeResumeState, clearResumeState } from './warroom-resume-file.js';
 import { logger } from './logger.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 
@@ -255,7 +279,16 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // Provides the API endpoints that warroom-html.ts frontend depends on.
 
   app.get('/warroom', (c) => {
-    return c.html(getWarRoomHtml(DASHBOARD_TOKEN, ALLOWED_CHAT_ID, WARROOM_PORT));
+    return c.html(
+      getWarRoomHtml(
+        DASHBOARD_TOKEN,
+        ALLOWED_CHAT_ID,
+        WARROOM_PORT,
+        WARROOM_TEXT_INPUT,
+        WARROOM_RESUME_ENABLED,
+        WARROOM_SETTINGS_ENABLED,
+      ),
+    );
   });
 
   app.get('/warroom-client.js', (c) => {
@@ -286,9 +319,18 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     });
   });
 
-  app.get('/api/warroom/agents', (c) => {
+  /** Path to the user-prefs YAML (gitignored) — respects env override. */
+  const userPrefsPath = (): string =>
+    WARROOM_USER_PREFS_FILE || path.join(PROJECT_ROOT, 'config', 'user-preferences.yaml');
+
+  /**
+   * Assemble the "base roster" — the 8 directory-backed agents plus any
+   * YAML-declared Obsidian agents (Slice 5). This list is the input to
+   * Slice 7's user preferences (filter/reorder/append).
+   */
+  const buildBaseRoster = (): RosterEntry[] => {
     const ids = ['main', ...listAgentIds().filter((id) => id !== 'main')];
-    const agents = ids.map((id) => {
+    const base: RosterEntry[] = ids.map((id) => {
       try {
         if (id === 'main') return { id: 'main', name: 'RC1 (Main)', description: 'Orchestrateur principal, triage, comms externes' };
         const cfg = loadAgentConfig(id);
@@ -297,7 +339,116 @@ export function startDashboard(botApi?: Api<RawApi>): void {
         return { id, name: id, description: '' };
       }
     });
+    try {
+      const yamlPath = path.join(PROJECT_ROOT, 'config', 'obsidian-agents.yaml');
+      const seen = new Set(base.map((a) => a.id));
+      for (const obs of loadObsidianAgents(yamlPath)) {
+        if (seen.has(obs.id)) continue;
+        base.push({
+          id: obs.id,
+          name: obs.name,
+          description: obs.description,
+          origin: 'obsidian',
+          vault_root: (obs as { vault_root?: string }).vault_root,
+          project_folder: (obs as { project_folder?: string }).project_folder,
+          voice: obs.voice,
+          avatar: obs.avatar,
+          model: obs.model,
+        });
+        seen.add(obs.id);
+      }
+    } catch (err) {
+      logger.warn({ err: (err as Error).message }, 'warroom: obsidian agent merge failed');
+    }
+    return base;
+  };
+
+  app.get('/api/warroom/agents', (c) => {
+    const base = buildBaseRoster();
+    // Slice 7 — apply user preferences on top (filter disabled, reorder,
+    // append added Obsidian agents from the Settings panel).
+    const prefs = loadUserPreferences(userPrefsPath());
+    const final = applyUserPreferences(base, prefs);
+    // Strip fields the client sidebar doesn't need (keep it lean).
+    const agents = final.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      ...(a.origin ? { origin: a.origin } : {}),
+    }));
     return c.json({ agents });
+  });
+
+  app.get('/api/warroom/settings', (c) => {
+    if (!WARROOM_SETTINGS_ENABLED) {
+      return c.json({ ok: false, error: 'settings disabled' }, 403);
+    }
+    const base = buildBaseRoster();
+    const prefs = loadUserPreferences(userPrefsPath());
+    return c.json({ ok: true, prefs, base_roster: base });
+  });
+
+  app.post('/api/warroom/settings', async (c) => {
+    if (!WARROOM_SETTINGS_ENABLED) {
+      return c.json({ ok: false, error: 'settings disabled' }, 403);
+    }
+    // Size guard: a realistic settings payload is < 10 KB; clamp at
+    // 64 KB to refuse anything pathological.
+    const raw = await c.req.text().catch(() => '');
+    if (raw.length > 64 * 1024) {
+      return c.json({ ok: false, error: 'payload too large' }, 413);
+    }
+    let body: Partial<UserPreferences>;
+    try {
+      body = (raw ? JSON.parse(raw) : {}) as Partial<UserPreferences>;
+    } catch {
+      return c.json({ ok: false, error: 'invalid JSON' }, 400);
+    }
+
+    const base = buildBaseRoster();
+    const baseIds = new Set(base.map((a) => a.id));
+
+    const disabled_agents = Array.isArray(body.disabled_agents)
+      ? body.disabled_agents.filter(
+          (id): id is string => typeof id === 'string' && (baseIds.has(id) || true),
+        )
+      : [];
+    const order = Array.isArray(body.order)
+      ? body.order.filter(
+          (id): id is string => typeof id === 'string' && baseIds.has(id),
+        )
+      : [];
+
+    // Validate each added_obsidian_agents entry server-side. An
+    // invalid entry rejects the whole POST so the client can surface
+    // a precise error.
+    const rawAdded = Array.isArray(body.added_obsidian_agents) ? body.added_obsidian_agents : [];
+    const added_obsidian_agents = [];
+    for (const entry of rawAdded) {
+      if (!entry || typeof entry !== 'object') continue;
+      const v = validateNewObsidianInput(entry as {
+        id: string; name: string; description: string;
+        vault_root: string; project_folder: string; voice: string;
+        avatar?: string; model?: string;
+      });
+      if (!v.ok) {
+        return c.json({ ok: false, error: v.error || 'invalid entry' }, 400);
+      }
+      // Refuse ids that would shadow a base entry.
+      const entryId = (entry as { id: string }).id;
+      if (baseIds.has(entryId)) {
+        return c.json({ ok: false, error: `id '${entryId}' collides with base agent` }, 400);
+      }
+      added_obsidian_agents.push(entry as {
+        id: string; name: string; description: string;
+        vault_root: string; project_folder: string; voice: string;
+        avatar?: string; model?: string;
+      });
+    }
+
+    const prefs: UserPreferences = { disabled_agents, order, added_obsidian_agents };
+    saveUserPreferences(prefs, userPrefsPath());
+    return c.json({ ok: true, prefs });
   });
 
   app.post('/api/warroom/start', async (c) => {
@@ -432,18 +583,38 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const body = await c.req.json().catch(() => ({})) as { id?: string; mode?: string; agent?: string };
     const id = body.id || crypto.randomUUID();
     createWarRoomMeeting(id, body.mode || 'direct', body.agent || 'main');
+    // Slice 2.1 — publish the meeting id so the Pipecat voice server can
+    // forward it to agent-voice-bridge as --meeting-id. Race: last writer
+    // wins (warroom is single-instance, so concurrent starts are unlikely).
+    writeCurrentMeetingId(id);
     return c.json({ ok: true, meetingId: id });
   });
 
   app.post('/api/warroom/meeting/end', async (c) => {
     const body = await c.req.json().catch(() => ({})) as { id?: string; entryCount?: number };
     if (body.id) endWarRoomMeeting(body.id, body.entryCount || 0);
+    // Slice 2.1 — always clear the shared meeting-file, even if the
+    // caller didn't provide an id (defensive: stops stale ids leaking
+    // into subsequent voice-bridge spawns after a meeting has ended).
+    clearCurrentMeetingId();
+    // Slice 6 — also clear any pending resume state. Normally the
+    // Python consumer clears it one-shot on first read, but if the
+    // user clicked Resume and never spoke, the file can linger.
+    clearResumeState();
     return c.json({ ok: true });
   });
 
   app.post('/api/warroom/meeting/transcript', async (c) => {
     const body = await c.req.json().catch(() => ({})) as { meetingId?: string; speaker?: string; text?: string };
     if (body.meetingId && body.speaker && body.text) {
+      const validation = validateTranscriptSpeaker(body.speaker);
+      if (!validation.ok) {
+        logger.warn(
+          { meetingId: body.meetingId, speaker: body.speaker, reason: validation.reason },
+          'warroom: rejected transcript entry with invalid speaker',
+        );
+        return c.json({ ok: false, reason: validation.reason }, 400);
+      }
       addWarRoomTranscript(body.meetingId, body.speaker, body.text);
     }
     return c.json({ ok: true });
@@ -456,6 +627,39 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   app.get('/api/warroom/meeting/:id/transcript', (c) => {
     return c.json({ transcript: getWarRoomTranscript(c.req.param('id')) });
+  });
+
+  // Slice 6 — Resume a past meeting. Writes the payload to the shared
+  // resume file so the Pipecat voice server picks it up one-shot on
+  // the next voice-bridge spawn. The file is cleared on meeting/end
+  // as a safety net (see clearResumeState below).
+  app.post('/api/warroom/meeting/:id/resume', (c) => {
+    if (!WARROOM_RESUME_ENABLED) {
+      return c.json({ ok: false, error: 'resume disabled' }, 403);
+    }
+    const meetingId = c.req.param('id');
+    try {
+      const payload = getResumePayload(getDatabase(), meetingId);
+      writeResumeState({
+        meeting_id: payload.meeting_id,
+        sessions: payload.sessions.map((s) => ({
+          agent_id: s.agent_id,
+          session_id: s.session_id,
+          last_turns: s.last_turns.map((t) => ({
+            turn_number: t.turn_number,
+            user_message: t.user_message,
+            agent_response: t.agent_response,
+          })),
+        })),
+      });
+      return c.json({ ok: true, ...payload });
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message, meetingId },
+        'warroom: resume payload failed',
+      );
+      return c.json({ ok: false, error: 'resume failed' }, 500);
+    }
   });
 
   // ── End War Room routes ────────────────────────────────────────────

@@ -37,6 +37,10 @@ const envConfig = readEnvFile([
   'MEMORY_NUDGE_INTERVAL_TURNS',
   'WARROOM_ENABLED',
   'WARROOM_PORT',
+  'WARROOM_TEXT_INPUT',
+  'WARROOM_RESUME_ENABLED',
+  'WARROOM_SETTINGS_ENABLED',
+  'WARROOM_USER_PREFS_FILE',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -269,4 +273,44 @@ export const WARROOM_PORT = parseInt(
   process.env.WARROOM_PORT || envConfig.WARROOM_PORT || '7860',
   10,
 );
+
+// War Room hybrid text/voice input (Slice 4). Default: enabled.
+// Set WARROOM_TEXT_INPUT=0 (or "false") to hide the text field and disable
+// the server-side handler. The client still probes the flag via
+// window.WARROOM_TEXT_INPUT so a stale cache can't re-enable the UI.
+export const WARROOM_TEXT_INPUT = (() => {
+  const raw = (process.env.WARROOM_TEXT_INPUT || envConfig.WARROOM_TEXT_INPUT || '')
+    .toLowerCase()
+    .trim();
+  // Anything that is explicitly "0" or "false" disables; everything else
+  // (including unset / "1" / "true" / "yes") enables.
+  return raw !== '0' && raw !== 'false' && raw !== 'no';
+})();
+
+// War Room archive resume (Slice 6). Default: enabled.
+// Set WARROOM_RESUME_ENABLED=0 to hide the "Resume" button and return
+// 403 from /api/warroom/meeting/:id/resume. The Python voice bridge
+// also checks this flag via warroom_resume.consume_resume_session().
+export const WARROOM_RESUME_ENABLED = (() => {
+  const raw = (process.env.WARROOM_RESUME_ENABLED || envConfig.WARROOM_RESUME_ENABLED || '')
+    .toLowerCase()
+    .trim();
+  return raw !== '0' && raw !== 'false' && raw !== 'no';
+})();
+
+// War Room settings & roster management (Slice 7). Default: enabled.
+// Set WARROOM_SETTINGS_ENABLED=0 to hide the gear icon and return 403
+// from /api/warroom/settings. The user-prefs file remains on disk but
+// is ignored by the Python server's roster build.
+export const WARROOM_SETTINGS_ENABLED = (() => {
+  const raw = (process.env.WARROOM_SETTINGS_ENABLED || envConfig.WARROOM_SETTINGS_ENABLED || '')
+    .toLowerCase()
+    .trim();
+  return raw !== '0' && raw !== 'false' && raw !== 'no';
+})();
+
+// Override path for the user preferences YAML. Default:
+// <PROJECT_ROOT>/config/user-preferences.yaml (gitignored).
+export const WARROOM_USER_PREFS_FILE =
+  process.env.WARROOM_USER_PREFS_FILE || envConfig.WARROOM_USER_PREFS_FILE || '';
 

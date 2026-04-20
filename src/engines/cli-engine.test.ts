@@ -232,6 +232,10 @@ describe('CliEngine', () => {
     expect(last).toEqual({
       type: 'result',
       text: 'done',
+      // Slice 2 — messageUuid is null when the SDK stub emits no assistant
+      // event carrying a message.id. The field is always present on the
+      // 'result' event (null fallback).
+      messageUuid: null,
       usage: {
         inputTokens: 1200,
         outputTokens: 80,

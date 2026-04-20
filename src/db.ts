@@ -319,6 +319,65 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_warroom_transcript_meeting ON warroom_transcript(meeting_id, id);
 
+    -- ── War Room v2 — Slice 2 : session store étendu ────────────────────
+    -- Claude Code session per (meeting, agent). Tracks the real SDK session_id
+    -- returned on the init event so we can resume the exact conversation.
+    CREATE TABLE IF NOT EXISTS warroom_agent_sessions (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id   TEXT NOT NULL,
+      agent_id     TEXT NOT NULL,
+      session_id   TEXT NOT NULL,
+      mode         TEXT NOT NULL DEFAULT 'direct',
+      status       TEXT NOT NULL DEFAULT 'active',
+      created_at   INTEGER NOT NULL,
+      FOREIGN KEY (meeting_id) REFERENCES warroom_meetings(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_warroom_agent_sessions_meeting
+      ON warroom_agent_sessions(meeting_id, agent_id);
+
+    -- One turn = one user message + agent response pair, scoped to an
+    -- agent session. turn_number is auto-incremented per agent_session_id
+    -- (enforced at application level in addWarRoomTurn, guarded by UNIQUE).
+    CREATE TABLE IF NOT EXISTS warroom_turns (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id          TEXT NOT NULL,
+      agent_session_id    INTEGER NOT NULL,
+      turn_number         INTEGER NOT NULL,
+      input_source        TEXT NOT NULL DEFAULT 'voice',
+      user_message        TEXT,
+      agent_response      TEXT,
+      claude_message_uuid TEXT,
+      input_tokens        INTEGER NOT NULL DEFAULT 0,
+      output_tokens       INTEGER NOT NULL DEFAULT 0,
+      cost_usd            REAL    NOT NULL DEFAULT 0,
+      did_compact         INTEGER NOT NULL DEFAULT 0,
+      duration_ms         INTEGER,
+      created_at          INTEGER NOT NULL,
+      FOREIGN KEY (meeting_id) REFERENCES warroom_meetings(id),
+      FOREIGN KEY (agent_session_id) REFERENCES warroom_agent_sessions(id),
+      UNIQUE (agent_session_id, turn_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_warroom_turns_session
+      ON warroom_turns(agent_session_id, turn_number);
+
+    -- Resumption checkpoints = conversational forks. Not used yet in
+    -- voice-bridge wiring (Slice 6) but schema lands now for the RED test.
+    CREATE TABLE IF NOT EXISTS warroom_resumption_checkpoints (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_session_id   INTEGER NOT NULL,
+      from_message_id    TEXT NOT NULL,
+      reason             TEXT,
+      checkpoint_at      INTEGER,
+      metadata           TEXT,
+      created_at         INTEGER NOT NULL,
+      FOREIGN KEY (agent_session_id) REFERENCES warroom_agent_sessions(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_warroom_resumption_checkpoints_session
+      ON warroom_resumption_checkpoints(agent_session_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS skill_health (
       skill_id    TEXT PRIMARY KEY NOT NULL,
       status      TEXT NOT NULL DEFAULT 'unchecked',
@@ -614,6 +673,24 @@ export function _initTestDatabase(): void {
 
 /** @internal - for tests only. Exposes raw DB handle for schema checks. */
 export function _testDb(): Database.Database {
+  return db;
+}
+
+/**
+ * Return the module-level Database handle (post-init).
+ * Used by helpers that want to compose with the Slice 2 war-room session
+ * helpers (`createWarRoomAgentSession`, `addWarRoomTurn`) which accept an
+ * explicit `Database` instance for testability.
+ *
+ * Throws if called before `initDatabase()` (or `_initTestDatabase()`).
+ */
+export function getDatabase(): Database.Database {
+  if (!db) {
+    throw new Error(
+      'getDatabase() called before initDatabase(). ' +
+        'Call initDatabase() at process startup.',
+    );
+  }
   return db;
 }
 
@@ -2131,4 +2208,278 @@ export function getWarRoomMeetings(limit = 20): unknown[] {
 
 export function getWarRoomTranscript(meetingId: string): unknown[] {
   return db.prepare('SELECT * FROM warroom_transcript WHERE meeting_id = ? ORDER BY id').all(meetingId);
+}
+
+// ── Slice 2 — War Room v2 session store ─────────────────────────────
+// 3 additive tables:
+//   - warroom_agent_sessions : (meeting × agent) ↔ Claude Code session_id
+//   - warroom_turns          : per-turn metrics, turn_number auto-incr
+//   - warroom_resumption_checkpoints : conversational forks (Slice 6)
+//
+// Double-write pattern: `addWarRoomTranscript` continues unchanged; the
+// new helpers below layer richer data on top. No breaking change.
+
+export interface WarRoomAgentSessionRow {
+  id: number;
+  meeting_id: string;
+  agent_id: string;
+  session_id: string;
+  mode: string;
+  status: string;
+  created_at: number;
+}
+
+export interface WarRoomTurnRow {
+  id: number;
+  meeting_id: string;
+  agent_session_id: number;
+  turn_number: number;
+  input_source: string;
+  user_message: string | null;
+  agent_response: string | null;
+  claude_message_uuid: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  did_compact: number;
+  duration_ms: number | null;
+  created_at: number;
+}
+
+export interface WarRoomResumptionCheckpointRow {
+  id: number;
+  agent_session_id: number;
+  from_message_id: string;
+  reason: string | null;
+  checkpoint_at: number | null;
+  metadata: string | null;
+  created_at: number;
+}
+
+/**
+ * Create a row in `warroom_agent_sessions` binding a meeting + agent to a
+ * Claude Code session_id. Returns the persisted row (id auto-generated).
+ *
+ * The `db` handle is explicitly passed for testability (call sites inside
+ * this module can pass the module-level `db`).
+ */
+export function createWarRoomAgentSession(
+  database: Database.Database,
+  params: {
+    meeting_id: string;
+    agent_id: string;
+    session_id: string;
+    mode?: string;
+  },
+): WarRoomAgentSessionRow {
+  const now = Math.floor(Date.now() / 1000);
+  const info = database
+    .prepare(
+      `INSERT INTO warroom_agent_sessions
+         (meeting_id, agent_id, session_id, mode, status, created_at)
+       VALUES (?, ?, ?, ?, 'active', ?)`,
+    )
+    .run(
+      params.meeting_id,
+      params.agent_id,
+      params.session_id,
+      params.mode ?? 'direct',
+      now,
+    );
+  const id = Number(info.lastInsertRowid);
+  const row = database
+    .prepare('SELECT * FROM warroom_agent_sessions WHERE id = ?')
+    .get(id) as WarRoomAgentSessionRow;
+  return row;
+}
+
+/**
+ * Look up an existing agent session row by (meeting_id, agent_id).
+ * Returns undefined if none exists. Used by the voice-bridge to reuse
+ * the same session row across successive turns of a meeting.
+ */
+export function getWarRoomAgentSession(
+  database: Database.Database,
+  meeting_id: string,
+  agent_id: string,
+): WarRoomAgentSessionRow | undefined {
+  return database
+    .prepare(
+      `SELECT * FROM warroom_agent_sessions
+        WHERE meeting_id = ? AND agent_id = ?
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(meeting_id, agent_id) as WarRoomAgentSessionRow | undefined;
+}
+
+/**
+ * Insert a new turn row with auto-incremented `turn_number` scoped to
+ * `agent_session_id`. Wrapped in a transaction so the MAX+INSERT is atomic
+ * under concurrent writers (better-sqlite3 is synchronous, so this is
+ * race-free in practice but the transaction documents intent and gives
+ * us rollback-on-constraint-violation behavior).
+ */
+export function addWarRoomTurn(
+  database: Database.Database,
+  params: {
+    agent_session_id: number;
+    meeting_id: string;
+    input_source?: string;
+    user_message?: string | null;
+    agent_response?: string | null;
+    claude_message_uuid?: string | null;
+    input_tokens?: number;
+    output_tokens?: number;
+    cost_usd?: number;
+    did_compact?: boolean;
+    duration_ms?: number;
+  },
+): WarRoomTurnRow {
+  const now = Math.floor(Date.now() / 1000);
+  const insertTurn = database.transaction((): WarRoomTurnRow => {
+    const maxRow = database
+      .prepare(
+        `SELECT COALESCE(MAX(turn_number), 0) AS max_turn
+           FROM warroom_turns
+          WHERE agent_session_id = ?`,
+      )
+      .get(params.agent_session_id) as { max_turn: number };
+    const nextTurn = maxRow.max_turn + 1;
+
+    const info = database
+      .prepare(
+        `INSERT INTO warroom_turns
+           (meeting_id, agent_session_id, turn_number, input_source,
+            user_message, agent_response, claude_message_uuid,
+            input_tokens, output_tokens, cost_usd, did_compact,
+            duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        params.meeting_id,
+        params.agent_session_id,
+        nextTurn,
+        params.input_source ?? 'voice',
+        params.user_message ?? null,
+        params.agent_response ?? null,
+        params.claude_message_uuid ?? null,
+        params.input_tokens ?? 0,
+        params.output_tokens ?? 0,
+        params.cost_usd ?? 0,
+        params.did_compact ? 1 : 0,
+        params.duration_ms ?? null,
+        now,
+      );
+    const id = Number(info.lastInsertRowid);
+    return database
+      .prepare('SELECT * FROM warroom_turns WHERE id = ?')
+      .get(id) as WarRoomTurnRow;
+  });
+  return insertTurn();
+}
+
+/**
+ * Persist a resumption checkpoint — a marker at which a conversation can
+ * be forked. Slice 2 only ships the schema + write helper; read/resume
+ * lives in Slice 6.
+ */
+export function saveResumptionCheckpoint(
+  database: Database.Database,
+  params: {
+    agent_session_id: number;
+    from_message_id: string;
+    reason?: string | null;
+    checkpoint_at?: number;
+    metadata?: string | null;
+  },
+): WarRoomResumptionCheckpointRow {
+  const now = Math.floor(Date.now() / 1000);
+  const info = database
+    .prepare(
+      `INSERT INTO warroom_resumption_checkpoints
+         (agent_session_id, from_message_id, reason, checkpoint_at, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      params.agent_session_id,
+      params.from_message_id,
+      params.reason ?? null,
+      params.checkpoint_at ?? now,
+      params.metadata ?? null,
+      now,
+    );
+  const id = Number(info.lastInsertRowid);
+  return database
+    .prepare('SELECT * FROM warroom_resumption_checkpoints WHERE id = ?')
+    .get(id) as WarRoomResumptionCheckpointRow;
+}
+
+// ── Slice 6 — Resume d'archive ──────────────────────────────────────
+
+export interface ResumeTurnRow {
+  turn_number: number;
+  user_message: string | null;
+  agent_response: string | null;
+  created_at: number;
+}
+
+export interface ResumeSessionPayload {
+  agent_id: string;
+  /** Claude Code session_id; '' means the anchor was purged (fallback path). */
+  session_id: string;
+  last_turns: ResumeTurnRow[];
+}
+
+export interface ResumePayload {
+  meeting_id: string;
+  sessions: ResumeSessionPayload[];
+}
+
+/**
+ * Build the resume payload for a meeting: every agent_session + the
+ * last N turns per session (chronological ASC order for replay).
+ *
+ * `session_id` may be '' if the row was persisted then cleared (we
+ * don't NULL it out because the column is NOT NULL) — callers treat
+ * empty as "no Claude Code anchor, use last_turns fallback".
+ */
+export function getResumePayload(
+  database: Database.Database,
+  meeting_id: string,
+  n: number = 5,
+): ResumePayload {
+  interface AgentSessionLite {
+    id: number;
+    agent_id: string;
+    session_id: string;
+  }
+  const sessions = database
+    .prepare(
+      `SELECT id, agent_id, session_id
+         FROM warroom_agent_sessions
+        WHERE meeting_id = ?
+        ORDER BY id ASC`,
+    )
+    .all(meeting_id) as AgentSessionLite[];
+
+  const out: ResumeSessionPayload[] = [];
+  for (const s of sessions) {
+    // Last N turns DESC, then reverse to chrono ASC in JS (cheap for N≤50).
+    const rows = database
+      .prepare(
+        `SELECT turn_number, user_message, agent_response, created_at
+           FROM warroom_turns
+          WHERE agent_session_id = ?
+          ORDER BY turn_number DESC
+          LIMIT ?`,
+      )
+      .all(s.id, n) as ResumeTurnRow[];
+    const last_turns = rows.reverse();
+    out.push({
+      agent_id: s.agent_id,
+      session_id: s.session_id || '',
+      last_turns,
+    });
+  }
+  return { meeting_id, sessions: out };
 }
