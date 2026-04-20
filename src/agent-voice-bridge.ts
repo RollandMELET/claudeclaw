@@ -27,6 +27,7 @@ import {
 } from './db.js';
 import { buildMemoryContext } from './memory.js';
 import { loadMcpServers } from './agent.js';
+import { parseVoiceBridgeArgs } from './warroom-obsidian-agents.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -40,34 +41,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-// Parse CLI args
-const args = process.argv.slice(2);
-let agentId = 'main';
-let message = '';
-let chatId = 'warroom';
-let quickMode = false;
+// Parse CLI args via the pure parser (Slice 5). `--cwd` is the new
+// flag, used when spawning Obsidian-backed agents whose project
+// folder lives outside PROJECT_ROOT/agents/. Quick mode: cap turns
+// hard, used by warroom auto-routing where voice latency matters
+// more than thoroughness. The agent still has MCP access but can
+// only do ~1 tool call round-trip before it has to answer.
+const parsed = parseVoiceBridgeArgs(process.argv.slice(2));
+const agentId = parsed.agentId;
+const message = parsed.message;
+const chatId = parsed.chatId;
+const quickMode = parsed.quickMode;
 // Slice 2 — optional meeting_id. When present, writes rich session/turn
 // rows to warroom_agent_sessions + warroom_turns in addition to the
 // legacy warroom_transcript. Absent = legacy behavior, no new writes.
-let meetingId: string | undefined;
-
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--agent' && args[i + 1]) {
-    agentId = args[++i];
-  } else if (args[i] === '--message' && args[i + 1]) {
-    message = args[++i];
-  } else if (args[i] === '--chat-id' && args[i + 1]) {
-    chatId = args[++i];
-  } else if (args[i] === '--meeting-id' && args[i + 1]) {
-    meetingId = args[++i];
-  } else if (args[i] === '--quick') {
-    // Quick mode: cap turns hard, used by warroom auto-routing where
-    // voice latency matters more than thoroughness. The agent still has
-    // MCP access but can only do ~1 tool call round-trip before it has
-    // to answer.
-    quickMode = true;
-  }
-}
+const meetingId = parsed.meetingId;
+// Slice 5 — optional --cwd override for Obsidian agents. When set,
+// the Claude Code SDK runs with this cwd instead of PROJECT_ROOT/agents/<id>.
+const cwdOverride = parsed.cwd;
 
 if (!message) {
   console.error(JSON.stringify({ response: null, usage: null, error: 'No --message provided' }));
@@ -117,13 +108,26 @@ async function main() {
       throw new Error(`Invalid agent ID: ${agentId}`);
     }
 
-    // Resolve agent directory and verify it's within the project
-    const agentDir = agentId === 'main'
-      ? PROJECT_ROOT
-      : path.join(PROJECT_ROOT, 'agents', agentId);
-    const resolved = path.resolve(agentDir);
-    if (!resolved.startsWith(path.resolve(PROJECT_ROOT) + path.sep) && resolved !== path.resolve(PROJECT_ROOT)) {
-      throw new Error(`Agent path outside project: ${resolved}`);
+    // Resolve agent working directory:
+    //   - Slice 5: if --cwd is set (Obsidian agent), trust the caller
+    //     (warroom/server.py resolves it from config/obsidian-agents.yaml
+    //     which already validated the path is inside vault_root).
+    //   - Otherwise: PROJECT_ROOT for 'main', PROJECT_ROOT/agents/<id>
+    //     for the 6 directory-backed agents (with the usual guard).
+    let agentDir: string;
+    if (cwdOverride) {
+      agentDir = path.resolve(cwdOverride);
+      if (!fs.existsSync(agentDir)) {
+        throw new Error(`--cwd path does not exist: ${agentDir}`);
+      }
+    } else {
+      agentDir = agentId === 'main'
+        ? PROJECT_ROOT
+        : path.join(PROJECT_ROOT, 'agents', agentId);
+      const resolved = path.resolve(agentDir);
+      if (!resolved.startsWith(path.resolve(PROJECT_ROOT) + path.sep) && resolved !== path.resolve(PROJECT_ROOT)) {
+        throw new Error(`Agent path outside project: ${resolved}`);
+      }
     }
 
     // Read the agent's MCP allowlist from its agent.yaml (if present). The

@@ -64,6 +64,7 @@ import {
   writeCurrentMeetingId,
   clearCurrentMeetingId,
 } from './warroom-meeting-file.js';
+import { loadObsidianAgents } from './warroom-obsidian-agents.js';
 import { WARROOM_ENABLED, WARROOM_PORT, WARROOM_TEXT_INPUT } from './config.js';
 import {
   createWarRoomMeeting,
@@ -295,15 +296,37 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   app.get('/api/warroom/agents', (c) => {
     const ids = ['main', ...listAgentIds().filter((id) => id !== 'main')];
-    const agents = ids.map((id) => {
-      try {
-        if (id === 'main') return { id: 'main', name: 'RC1 (Main)', description: 'Orchestrateur principal, triage, comms externes' };
-        const cfg = loadAgentConfig(id);
-        return { id, name: cfg.name || id, description: cfg.description || '' };
-      } catch {
-        return { id, name: id, description: '' };
+    const agents: Array<{ id: string; name: string; description: string; origin?: string }> =
+      ids.map((id) => {
+        try {
+          if (id === 'main') return { id: 'main', name: 'RC1 (Main)', description: 'Orchestrateur principal, triage, comms externes' };
+          const cfg = loadAgentConfig(id);
+          return { id, name: cfg.name || id, description: cfg.description || '' };
+        } catch {
+          return { id, name: id, description: '' };
+        }
+      });
+
+    // Slice 5 — merge Obsidian agents (config/obsidian-agents.yaml).
+    // Base entries win on id collision; Obsidian YAML cannot override
+    // a directory-backed agent. Dedup + append in YAML order.
+    try {
+      const yamlPath = path.join(PROJECT_ROOT, 'config', 'obsidian-agents.yaml');
+      const seen = new Set(agents.map((a) => a.id));
+      for (const obs of loadObsidianAgents(yamlPath)) {
+        if (seen.has(obs.id)) continue;
+        agents.push({
+          id: obs.id,
+          name: obs.name,
+          description: obs.description,
+          origin: 'obsidian',
+        });
+        seen.add(obs.id);
       }
-    });
+    } catch (err) {
+      logger.warn({ err: (err as Error).message }, 'warroom: obsidian agent merge failed');
+    }
+
     return c.json({ agents });
   });
 

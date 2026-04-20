@@ -205,19 +205,86 @@ def print_ready(port: int, mode: str):
 NODE_BIN = os.environ.get("NODE_BIN") or shutil.which("node") or "node"
 MISSION_CLI = PROJECT_ROOT / "dist" / "mission-cli.js"
 VOICE_BRIDGE = PROJECT_ROOT / "dist" / "agent-voice-bridge.js"
-# Load agent roster dynamically from the file Node writes on startup.
-# Falls back to the default 5 if the file doesn't exist.
-def _load_agent_roster():
-    roster_path = Path("/tmp/warroom-agents.json")
-    try:
-        if roster_path.exists():
-            agents = json.loads(roster_path.read_text())
-            return {a["id"] for a in agents}
-    except Exception as exc:
-        logger.warning("Could not read agent roster from %s: %s", roster_path, exc)
-    return {"main", "research", "comms", "content", "ops", "rc2", "qonto", "hcom"}
 
-VALID_AGENTS = _load_agent_roster()
+# Slice 5 — Obsidian agents: at boot, merge any agents declared in
+# config/obsidian-agents.yaml into the shared roster so the existing
+# personas._generate_persona() fallback picks them up + VALID_AGENTS
+# accepts them in answer_as_agent_handler validation.
+OBSIDIAN_YAML = PROJECT_ROOT / "config" / "obsidian-agents.yaml"
+# Keep the last-loaded Obsidian agent list in memory so the voice-bridge
+# spawner (_cwd_for_agent) can resolve --cwd without re-parsing YAML.
+_OBSIDIAN_AGENTS_CACHE: list[dict[str, object]] = []
+
+
+def _rebuild_roster_and_valid_agents() -> set[str]:
+    """Merge the 8 hardcoded agents + Obsidian YAML entries into
+    /tmp/warroom-agents.json and return the VALID_AGENTS set.
+
+    Called once at module import time. Idempotent — safe to call again
+    if we ever support hot-reload.
+    """
+    # The 8 hardcoded / directory-backed agents (the 6 shipped dirs +
+    # main + hcom for legacy). Each carries the minimum fields
+    # personas._generate_persona() reads (id + name + description).
+    base = [
+        {"id": "main", "name": "RC1 (Main)", "description": "Orchestrateur principal, triage, comms externes"},
+        {"id": "research", "name": "Research", "description": "Grand Maester. Deep web research, competitive intel."},
+        {"id": "comms", "name": "Comms", "description": "Master of Whisperers. Email, Slack, Telegram, customer comms."},
+        {"id": "content", "name": "Content", "description": "Royal Bard. Writing, YouTube scripts, LinkedIn, blog copy."},
+        {"id": "ops", "name": "Ops", "description": "Master of War. Calendar, scheduling, cron, automations."},
+        {"id": "rc2", "name": "RC2", "description": "Dev agent interne (fork)."},
+        {"id": "qonto", "name": "Qonto", "description": "Treasurer. RorWorld/GS1 finances via Qonto API."},
+        {"id": "hcom", "name": "HCOM", "description": "Inter-agent comms daemon."},
+    ]
+
+    obs_agents: list[dict[str, object]] = []
+    try:
+        from obsidian_loader import load_agents as _load_obs, merge_into_roster as _merge
+
+        obs_agents = _load_obs(str(OBSIDIAN_YAML))
+        _merge(base, obs_agents, roster_path="/tmp/warroom-agents.json")
+        if obs_agents:
+            logger.info(
+                "warroom: merged %d Obsidian agent(s) into roster: %s",
+                len(obs_agents),
+                ", ".join(str(a.get("id")) for a in obs_agents),
+            )
+    except Exception as exc:
+        logger.warning("warroom: Obsidian merge failed, falling back to base roster: %s", exc)
+        # Still write the base roster so _generate_persona has something.
+        try:
+            Path("/tmp/warroom-agents.json").write_text(
+                json.dumps(base, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as werr:
+            logger.warning("warroom: roster write failed: %s", werr)
+
+    _OBSIDIAN_AGENTS_CACHE.clear()
+    _OBSIDIAN_AGENTS_CACHE.extend(obs_agents)
+
+    valid = {a["id"] for a in base}
+    for a in obs_agents:
+        aid = a.get("id")
+        if isinstance(aid, str):
+            valid.add(aid)
+    return valid
+
+
+VALID_AGENTS = _rebuild_roster_and_valid_agents()
+
+
+def _cwd_for_agent(agent_id: str) -> str | None:
+    """Return the Obsidian-backed cwd for `agent_id`, or None for
+    regular directory-backed agents. Used to forward --cwd to
+    agent-voice-bridge at spawn time.
+    """
+    for a in _OBSIDIAN_AGENTS_CACHE:
+        if a.get("id") == agent_id:
+            cwd = a.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                return cwd
+    return None
 
 # Chat id used for agent-voice-bridge session persistence. The warroom is
 # a single shared meeting, not per-chat, so we use a fixed id unless the
@@ -448,6 +515,14 @@ async def answer_as_agent_handler(params):
     meeting_id = _current_meeting_id()
     if meeting_id:
         cmd.extend(["--meeting-id", meeting_id])
+
+    # Slice 5 — forward --cwd for Obsidian-backed agents. The cwd was
+    # already validated to be inside vault_root by obsidian_loader, so
+    # we just pass it through. Directory-backed agents (the 6 shipped
+    # dirs) don't get a --cwd and the bridge defaults to PROJECT_ROOT/agents/<id>.
+    obsidian_cwd = _cwd_for_agent(agent)
+    if obsidian_cwd:
+        cmd.extend(["--cwd", obsidian_cwd])
 
     code, out, err = await _run_subprocess(cmd, timeout=ANSWER_TIMEOUT_SEC)
 

@@ -55,3 +55,7 @@ wiki/
 # Playwright e2e reports and traces (auto-generated, not versioned)
 playwright-report/
 test-results/
+
+# Slice 5 — Obsidian agents config (local paths, not versioned).
+# Commit only config/obsidian-agents.example.yaml as a template.
+config/obsidian-agents.yaml
