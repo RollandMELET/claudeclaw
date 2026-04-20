@@ -16,7 +16,15 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs';
 import yaml from 'js-yaml';
 import { readEnvFile } from './env.js';
-import { initDatabase, getSession, setSession } from './db.js';
+import {
+  initDatabase,
+  getSession,
+  setSession,
+  getDatabase,
+  createWarRoomAgentSession,
+  getWarRoomAgentSession,
+  addWarRoomTurn,
+} from './db.js';
 import { buildMemoryContext } from './memory.js';
 import { loadMcpServers } from './agent.js';
 import path from 'path';
@@ -38,6 +46,10 @@ let agentId = 'main';
 let message = '';
 let chatId = 'warroom';
 let quickMode = false;
+// Slice 2 — optional meeting_id. When present, writes rich session/turn
+// rows to warroom_agent_sessions + warroom_turns in addition to the
+// legacy warroom_transcript. Absent = legacy behavior, no new writes.
+let meetingId: string | undefined;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--agent' && args[i + 1]) {
@@ -46,6 +58,8 @@ for (let i = 0; i < args.length; i++) {
     message = args[++i];
   } else if (args[i] === '--chat-id' && args[i + 1]) {
     chatId = args[++i];
+  } else if (args[i] === '--meeting-id' && args[i + 1]) {
+    meetingId = args[++i];
   } else if (args[i] === '--quick') {
     // Quick mode: cap turns hard, used by warroom auto-routing where
     // voice latency matters more than thoroughness. The agent still has
@@ -158,6 +172,10 @@ async function main() {
     let resultText: string | null = null;
     let newSessionId: string | undefined;
     let usage: Record<string, number> = {};
+    // Slice 2 — capture the SDK message UUID (if exposed) for turn persistence.
+    let messageUuid: string | null = null;
+    let didCompact = false;
+    const turnStartMs = Date.now();
 
     for await (const event of query({
       prompt: singleTurn(fullMessage),
@@ -181,6 +199,18 @@ async function main() {
         newSessionId = ev['session_id'] as string;
       }
 
+      if (ev['type'] === 'system' && ev['subtype'] === 'compact_boundary') {
+        didCompact = true;
+      }
+
+      if (ev['type'] === 'assistant') {
+        // The SDK surfaces the assistant message UUID in `message.id`.
+        // Keep the latest one — it's the anchor for resumption forks.
+        const msg = ev['message'] as Record<string, unknown> | undefined;
+        const id = msg?.['id'];
+        if (typeof id === 'string') messageUuid = id;
+      }
+
       if (ev['type'] === 'result') {
         resultText = (ev['result'] as string | null | undefined) ?? null;
         const evUsage = ev['usage'] as Record<string, number> | undefined;
@@ -197,6 +227,47 @@ async function main() {
     // Save session for continuity
     if (newSessionId) {
       setSession(chatId, newSessionId, agentId);
+    }
+
+    // Slice 2 — double-write to warroom_agent_sessions + warroom_turns
+    // when a meeting context is provided. The legacy transcript write
+    // stays in dashboard.ts (POST /api/warroom/meeting/transcript) so we
+    // don't touch the on-screen transcript path.
+    if (meetingId && newSessionId) {
+      try {
+        const database = getDatabase();
+        // Reuse the existing agent_session row if one already exists for
+        // this (meeting, agent) — otherwise create it. This keeps
+        // `turn_number` auto-increment scoped to a single session across
+        // all turns of a meeting.
+        const agentSession =
+          getWarRoomAgentSession(database, meetingId, agentId) ??
+          createWarRoomAgentSession(database, {
+            meeting_id: meetingId,
+            agent_id: agentId,
+            session_id: newSessionId,
+          });
+        addWarRoomTurn(database, {
+          agent_session_id: agentSession.id,
+          meeting_id: meetingId,
+          input_source: 'voice',
+          user_message: message,
+          agent_response: resultText,
+          claude_message_uuid: messageUuid,
+          input_tokens: usage['input_tokens'] ?? 0,
+          output_tokens: usage['output_tokens'] ?? 0,
+          cost_usd: usage['cost_usd'] ?? 0,
+          did_compact: didCompact,
+          duration_ms: Date.now() - turnStartMs,
+        });
+      } catch (err) {
+        // Non-fatal: session-store write failure must not break the
+        // voice response path. The legacy transcript write (in
+        // dashboard.ts) is unaffected.
+        process.stderr.write(
+          `[voice-bridge] warroom session-store write failed: ${err}\n`,
+        );
+      }
     }
 
     console.log(JSON.stringify({
