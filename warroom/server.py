@@ -817,6 +817,11 @@ async def run_live_mode():
     # even for main (Charon). Pipecat only warns about deprecation, not
     # actively breaks.
     live_kwargs["voice_id"] = voice
+    # Hand Up mode spawns a Claude Code SDK subprocess via answer_as_agent;
+    # cold start plus OAuth refresh commonly exceeds Pipecat's 10s default
+    # tool timeout, which aborts the function call and collapses the pipeline.
+    # 30s covers typical cold-start latency.
+    live_kwargs["function_call_timeout_secs"] = 30
 
     llm = GeminiLiveLLMService(**live_kwargs)
 

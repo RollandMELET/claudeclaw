@@ -74,10 +74,10 @@ async def handle_text_input_message(task: Any, message: Any) -> None:
 
     # Import the frame type lazily so unit tests can mock
     # pipecat.frames.frames via sys.modules without the real install.
-    from pipecat.frames.frames import LLMMessagesAppendFrame  # type: ignore
+    # InputTextRawFrame is the frame Gemini Live consumes for user text turns
+    # (see pipecat.services.google.gemini_live.llm:1063). LLMMessagesAppendFrame
+    # only works as a legacy kickoff when no context aggregator is attached.
+    from pipecat.frames.frames import InputTextRawFrame  # type: ignore
 
-    frame = LLMMessagesAppendFrame(
-        messages=[{"role": "user", "content": text}],
-        run_llm=True,
-    )
+    frame = InputTextRawFrame(text=text)
     await task.queue_frame(frame)

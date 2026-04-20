@@ -42,7 +42,8 @@ CLAUDE.md
 agents/*/agent.yaml
 agents/*/CLAUDE.md
 
-# War Room Python venv (created on host, not versioned)
+# War Room Python venv (created on host, not versioned — can be a symlink)
+warroom/.venv
 warroom/.venv/
 warroom/__pycache__/
 warroom/*.pyc
