@@ -60,6 +60,10 @@ import { processMessageFromDashboard } from './bot.js';
 import { getDashboardHtml } from './dashboard-html.js';
 import { getWarRoomHtml } from './warroom-html.js';
 import { validateTranscriptSpeaker } from './warroom-transcript-validator.js';
+import {
+  writeCurrentMeetingId,
+  clearCurrentMeetingId,
+} from './warroom-meeting-file.js';
 import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
 import {
   createWarRoomMeeting,
@@ -433,12 +437,20 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const body = await c.req.json().catch(() => ({})) as { id?: string; mode?: string; agent?: string };
     const id = body.id || crypto.randomUUID();
     createWarRoomMeeting(id, body.mode || 'direct', body.agent || 'main');
+    // Slice 2.1 — publish the meeting id so the Pipecat voice server can
+    // forward it to agent-voice-bridge as --meeting-id. Race: last writer
+    // wins (warroom is single-instance, so concurrent starts are unlikely).
+    writeCurrentMeetingId(id);
     return c.json({ ok: true, meetingId: id });
   });
 
   app.post('/api/warroom/meeting/end', async (c) => {
     const body = await c.req.json().catch(() => ({})) as { id?: string; entryCount?: number };
     if (body.id) endWarRoomMeeting(body.id, body.entryCount || 0);
+    // Slice 2.1 — always clear the shared meeting-file, even if the
+    // caller didn't provide an id (defensive: stops stale ids leaking
+    // into subsequent voice-bridge spawns after a meeting has ended).
+    clearCurrentMeetingId();
     return c.json({ ok: true });
   });
 

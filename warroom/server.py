@@ -225,6 +225,34 @@ VALID_AGENTS = _load_agent_roster()
 # side by side during testing).
 WARROOM_CHAT_ID = os.environ.get("WARROOM_CHAT_ID", "warroom")
 
+
+# Slice 2.1 — Shared file the dashboard (Node) writes on POST
+# /api/warroom/meeting/{start,end}. We read it before each voice-bridge
+# spawn so the session store (Slice 2) can bind turns to the right
+# meeting. Same pattern as /tmp/warroom-agents.json.
+#
+# Path override mirrors the TypeScript side (WARROOM_MEETING_FILE env).
+def _current_meeting_id() -> str | None:
+    """Return the active meeting id written by dashboard.ts, or None.
+
+    Returns None if the file is missing, empty, whitespace-only, or
+    unreadable. Never raises — voice path must not break on I/O errors.
+    """
+    path = os.environ.get(
+        "WARROOM_MEETING_FILE", "/tmp/warroom-current-meeting.txt"
+    )
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            value = fh.read().strip()
+        return value or None
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning(
+            "warroom: could not read current meeting file %s: %s", path, exc
+        )
+        return None
+
 # Timeout for synchronous answer_as_agent invocations. Voice UX expects
 # answers back within a few seconds. 25s is the hard ceiling — past that
 # we fail the tool call and let Gemini recover conversationally.
@@ -413,6 +441,14 @@ async def answer_as_agent_handler(params):
         "--chat-id", WARROOM_CHAT_ID,
         "--message", question,
     ]
+
+    # Slice 2.1 — forward the current meeting id (if any) so the bridge
+    # can double-write to warroom_agent_sessions + warroom_turns. When
+    # no meeting is active, the bridge falls back to legacy behavior.
+    meeting_id = _current_meeting_id()
+    if meeting_id:
+        cmd.extend(["--meeting-id", meeting_id])
+
     code, out, err = await _run_subprocess(cmd, timeout=ANSWER_TIMEOUT_SEC)
 
     if code != 0:
