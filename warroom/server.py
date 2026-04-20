@@ -702,6 +702,28 @@ async def run_live_mode():
         cancel_on_idle_timeout=False,
     )
 
+    # Slice 4 — hybrid text input. Register an RTVI client-message
+    # handler so the browser can inject text turns into the live
+    # Gemini conversation alongside voice input.
+    try:
+        from warroom_text_input import handle_text_input_message
+
+        @task.rtvi.event_handler("on_client_message")
+        async def _on_client_message(rtvi, message):
+            # handle_text_input_message is a no-op when:
+            #   - WARROOM_TEXT_INPUT=0 is set in env,
+            #   - message.type is not "text-input",
+            #   - or data.text is empty/whitespace.
+            # So the voice pipeline is unaffected by every other
+            # RTVI client message pipecat already dispatches.
+            await handle_text_input_message(task, message)
+
+        logger.info("warroom: registered on_client_message handler (text-input routing)")
+    except Exception as exc:
+        # Non-fatal: if RTVI wiring breaks (unlikely, PipelineTask
+        # enables it by default), the voice path still works.
+        logger.warning("warroom: could not register text-input handler: %s", exc)
+
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected; keeping pipeline alive for next meeting")

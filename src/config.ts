@@ -37,6 +37,7 @@ const envConfig = readEnvFile([
   'MEMORY_NUDGE_INTERVAL_TURNS',
   'WARROOM_ENABLED',
   'WARROOM_PORT',
+  'WARROOM_TEXT_INPUT',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -269,4 +270,17 @@ export const WARROOM_PORT = parseInt(
   process.env.WARROOM_PORT || envConfig.WARROOM_PORT || '7860',
   10,
 );
+
+// War Room hybrid text/voice input (Slice 4). Default: enabled.
+// Set WARROOM_TEXT_INPUT=0 (or "false") to hide the text field and disable
+// the server-side handler. The client still probes the flag via
+// window.WARROOM_TEXT_INPUT so a stale cache can't re-enable the UI.
+export const WARROOM_TEXT_INPUT = (() => {
+  const raw = (process.env.WARROOM_TEXT_INPUT || envConfig.WARROOM_TEXT_INPUT || '')
+    .toLowerCase()
+    .trim();
+  // Anything that is explicitly "0" or "false" disables; everything else
+  // (including unset / "1" / "true" / "yes") enables.
+  return raw !== '0' && raw !== 'false' && raw !== 'no';
+})();
 

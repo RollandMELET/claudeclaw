@@ -7,11 +7,21 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-export function getWarRoomHtml(token: string, chatId: string, warroomPort: number): string {
+export function getWarRoomHtml(
+  token: string,
+  chatId: string,
+  warroomPort: number,
+  /** Slice 4 feature flag. Default true = show hybrid text input. */
+  textInputEnabled: boolean = true,
+): string {
   const safeToken = escapeHtml(token);
   const safeChatId = escapeHtml(chatId);
   const jsToken = JSON.stringify(token);
   const jsChatId = JSON.stringify(chatId);
+  // Emitted to the client as a JSON string so the inline JS can probe it
+  // the same way the server does. "1" / "0" keeps the ambient value small
+  // and stable (avoids truthy/falsy surprises on tags like "yes"/"no").
+  const jsTextInputFlag = textInputEnabled ? '"1"' : '"0"';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -724,6 +734,61 @@ export function getWarRoomHtml(token: string, chatId: string, warroomPort: numbe
     white-space: nowrap;
   }
 
+  /* ── Hybrid text input (Slice 4) ── */
+  .text-input-row {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 220px;
+    max-width: 520px;
+  }
+  .text-input-row input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    color: #ddd;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .text-input-row input[type="text"]::placeholder {
+    color: rgba(255,255,255,0.25);
+  }
+  .text-input-row input[type="text"]:focus {
+    outline: none;
+    border-color: rgba(59,130,246,0.4);
+    background: rgba(255,255,255,0.04);
+  }
+  .text-input-row input[type="text"]:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .text-input-row .send-btn {
+    background: rgba(59,130,246,0.1);
+    border: 1px solid rgba(59,130,246,0.2);
+    color: #3b82f6;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 10px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .text-input-row .send-btn:hover:not(:disabled) {
+    background: rgba(59,130,246,0.18);
+    color: #fff;
+  }
+  .text-input-row .send-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
   /* ── Live mic waveform ── */
   .wave-wrap {
     flex: 1;
@@ -990,6 +1055,12 @@ export function getWarRoomHtml(token: string, chatId: string, warroomPort: numbe
             <line x1="8" y1="23" x2="16" y2="23"/>
           </svg>
         </button>
+        ${textInputEnabled ? `<div class="text-input-row">
+          <input type="text" id="warroomTextInput" placeholder="Type to inject into the meeting, Enter to send"
+                 autocomplete="off" autocapitalize="sentences"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();sendWarRoomText();}" />
+          <button type="button" class="send-btn" id="warroomTextSendBtn" onclick="sendWarRoomText()">Send</button>
+        </div>` : ''}
         <div class="wave-wrap" id="waveWrap">
           <div class="wave-label">MIC</div>
           <canvas id="micWaveCanvas"></canvas>
@@ -2174,6 +2245,68 @@ function toggleMic() {
     btn.classList.remove('recording');
     document.getElementById('statusText').textContent = 'muted';
   }
+}
+
+// ── Slice 4: hybrid text input ─────────────────────────────────────────
+// Feature flag mirrors src/config.ts WARROOM_TEXT_INPUT. Emitted as
+// "1" / "0" so the inline client JS can noop when disabled.
+window.WARROOM_TEXT_INPUT = ${jsTextInputFlag};
+
+function sendWarRoomText() {
+  if (window.WARROOM_TEXT_INPUT === '0') return; // server-disabled
+  var input = document.getElementById('warroomTextInput');
+  if (!input) return;
+  var raw = (input.value || '').trim();
+  if (!raw) return; // no empty/whitespace turns
+  var text = raw;
+
+  // Local echo: show the typed text in the transcript before the
+  // round-trip. addTranscriptEntry('You', ...) renders with the
+  // .transcript-speaker.user class and persists via
+  // POST /api/warroom/meeting/transcript (speaker='user' on the wire).
+  // The test asserts on both the "user" class and the word "user",
+  // so we also tag the entry with a data-speaker attribute for
+  // robustness against label tweaks.
+  try {
+    addTranscriptEntry('You', text);
+    var entries = document.querySelectorAll('#transcript .transcript-entry');
+    if (entries.length) {
+      entries[entries.length - 1].setAttribute('data-speaker', 'user');
+    }
+  } catch (e) {
+    console.warn('text-input: local echo failed', e);
+  }
+
+  // Persist as a user turn so the archive (Slice 3) and session store
+  // (Slice 2 when --meeting-id is wired) both see the text turn. This
+  // posts to the same endpoint the voice pipeline uses.
+  if (typeof currentMeetingId !== 'undefined' && currentMeetingId) {
+    try {
+      fetch(API_BASE + '/api/warroom/meeting/transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meetingId: currentMeetingId, speaker: 'user', text: text })
+      }).catch(function(e) { console.warn('text-input: persist failed', e); });
+    } catch (e) { console.warn('text-input: persist setup failed', e); }
+  }
+
+  // Route to Pipecat / Gemini Live. The warroom server registers an
+  // on_client_message handler for type "text-input" that queues an
+  // LLMMessagesAppendFrame(role='user') so the model sees it as a
+  // normal user turn and answers vocally.
+  try {
+    if (pipecatClient && typeof pipecatClient.sendClientMessage === 'function') {
+      pipecatClient.sendClientMessage('text-input', { text: text });
+    } else {
+      console.warn('text-input: no live pipecatClient (meeting not started?)');
+    }
+  } catch (e) {
+    console.warn('text-input: sendClientMessage failed', e);
+  }
+
+  // Clear + refocus for the next turn (keyboard flow).
+  input.value = '';
+  input.focus();
 }
 
 // ── Slice 3: Past Meetings archive (read-only) ─────────────────────────

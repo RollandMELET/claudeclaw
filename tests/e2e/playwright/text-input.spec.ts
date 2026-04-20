@@ -154,6 +154,23 @@ test.describe('Slice 4 — War Room text input', () => {
     await stubBackend(page);
     await openWarRoom(page);
 
+    // Simulate a meeting in progress: the real path constructs
+    // pipecatClient inside toggleMeeting() → connect(), which we don't
+    // want to run in this test (no WS server). Instead we install the
+    // mock client directly. This exercises the same sendWarRoomText()
+    // path a live user would trigger after starting a meeting.
+    await page.evaluate(() => {
+      interface MockClient { sendClientMessage: (t: string, d: unknown) => void }
+      interface W { __sentClientMessages?: Array<{ msgType: string; data: unknown }>; pipecatClient?: MockClient }
+      const w = window as unknown as W;
+      w.__sentClientMessages = w.__sentClientMessages || [];
+      w.pipecatClient = {
+        sendClientMessage(msgType: string, data: unknown) {
+          (w.__sentClientMessages as Array<{ msgType: string; data: unknown }>).push({ msgType, data });
+        },
+      };
+    });
+
     const input = page.locator('#warroomTextInput');
     await input.fill('Hello from text');
     await input.press('Enter');

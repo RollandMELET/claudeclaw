@@ -64,7 +64,7 @@ import {
   writeCurrentMeetingId,
   clearCurrentMeetingId,
 } from './warroom-meeting-file.js';
-import { WARROOM_ENABLED, WARROOM_PORT } from './config.js';
+import { WARROOM_ENABLED, WARROOM_PORT, WARROOM_TEXT_INPUT } from './config.js';
 import {
   createWarRoomMeeting,
   endWarRoomMeeting,
@@ -260,7 +260,9 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // Provides the API endpoints that warroom-html.ts frontend depends on.
 
   app.get('/warroom', (c) => {
-    return c.html(getWarRoomHtml(DASHBOARD_TOKEN, ALLOWED_CHAT_ID, WARROOM_PORT));
+    return c.html(
+      getWarRoomHtml(DASHBOARD_TOKEN, ALLOWED_CHAT_ID, WARROOM_PORT, WARROOM_TEXT_INPUT),
+    );
   });
 
   app.get('/warroom-client.js', (c) => {

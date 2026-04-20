@@ -73,11 +73,13 @@ describe('Slice 4 — War Room text input (client, RED)', () => {
 
     it('echoes the typed text locally via addTranscriptEntry before the server round-trip', () => {
       // Local echo prevents the visible lag while Gemini Live processes.
-      // We search for the pattern "addTranscriptEntry('user'" (or "user")
-      // triggered from the text submit handler. Close enough as a pin.
+      // The existing voice path uses addTranscriptEntry('You', text) — we
+      // keep the same convention for text turns so the rendered class is
+      // .transcript-speaker.user via the existing speaker='You' → 'user'
+      // mapping in addTranscriptEntry.
       const html = getWarRoomHtml('t', 'c', 7860);
       expect(html).toMatch(/sendWarRoomText/);
-      expect(html).toMatch(/addTranscriptEntry\s*\(\s*['"]user['"]/);
+      expect(html).toMatch(/addTranscriptEntry\s*\(\s*['"]You['"]/);
     });
 
     it('persists the text turn via POST /api/warroom/meeting/transcript', () => {
