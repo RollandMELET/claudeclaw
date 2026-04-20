@@ -2413,3 +2413,38 @@ export function saveResumptionCheckpoint(
     .prepare('SELECT * FROM warroom_resumption_checkpoints WHERE id = ?')
     .get(id) as WarRoomResumptionCheckpointRow;
 }
+
+// ── Slice 6 — Resume d'archive ──────────────────────────────────────
+
+export interface ResumeTurnRow {
+  turn_number: number;
+  user_message: string | null;
+  agent_response: string | null;
+  created_at: number;
+}
+
+export interface ResumeSessionPayload {
+  agent_id: string;
+  /** Claude Code session_id; '' means the anchor was purged (fallback path). */
+  session_id: string;
+  last_turns: ResumeTurnRow[];
+}
+
+export interface ResumePayload {
+  meeting_id: string;
+  sessions: ResumeSessionPayload[];
+}
+
+/**
+ * Build the resume payload for a meeting: every agent_session + the
+ * last N turns per session (chronological ASC order for replay).
+ *
+ * RED stub — GREEN implements the real SELECTs.
+ */
+export function getResumePayload(
+  _database: Database.Database,
+  _meeting_id: string,
+  _n: number = 5,
+): ResumePayload {
+  throw new Error('not implemented — Slice 6 GREEN');
+}
