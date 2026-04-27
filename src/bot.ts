@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
+
+import { createHookRegistry, loadHooksFromDir, runHooks } from './hooks.js';
 
 import { runAgent, UsageInfo, AgentProgressEvent } from './agent.js';
 import {
@@ -38,6 +41,20 @@ import {
   getSecurityStatus,
   audit,
 } from './security.js';
+
+// ── Hook registry ────────────────────────────────────────────────────
+const __filename_bot = fileURLToPath(import.meta.url);
+const __dirname_bot = path.dirname(__filename_bot);
+const HOOKS_DIR = path.join(__dirname_bot, 'hooks');
+
+export const hookRegistry = createHookRegistry();
+let hooksLoaded = false;
+
+async function ensureHooksLoaded(): Promise<void> {
+  if (hooksLoaded) return;
+  await loadHooksFromDir(HOOKS_DIR, hookRegistry);
+  hooksLoaded = true;
+}
 
 // ── Streaming rate limiter ───────────────────────────────────────────
 const globalStreamLastEdit = new Map<string, number>();
@@ -733,7 +750,7 @@ function discoverSkillCommands(): Array<{ command: string; description: string }
   return commands.sort((a, b) => a.command.localeCompare(b.command));
 }
 
-export function createBot(): Bot {
+export async function createBot(): Promise<Bot> {
   const token = activeBotToken;
   if (!token) {
     throw new Error('Bot token is not set. Check .env or agent config.');
@@ -743,6 +760,8 @@ export function createBot(): Bot {
   loadVoicePrefs();
 
   const bot = new Bot(token);
+
+  await ensureHooksLoaded();
 
   // Reject group chats. ClaudeClaw only works in private (1-on-1) chats.
   // This prevents message leakage if the bot is added to a group.
@@ -881,6 +900,12 @@ export function createBot(): Bot {
       })();
     }
 
+    await runHooks(hookRegistry.onSessionEnd, {
+      chatId: chatIdStr,
+      agentId: AGENT_ID,
+      sessionId: oldSessionId,
+    });
+
     clearSession(chatIdStr, AGENT_ID);
     sessionBaseline.delete(chatIdStr);
     await ctx.reply('Session cleared. Starting fresh.');
@@ -1011,7 +1036,14 @@ export function createBot(): Bot {
   // /forget — clear session (memory decay handles the rest)
   bot.command('forget', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
-    clearSession(ctx.chat!.id.toString(), AGENT_ID);
+    const chatIdStr = ctx.chat!.id.toString();
+    const oldSessionId = getSession(chatIdStr, AGENT_ID);
+    await runHooks(hookRegistry.onSessionEnd, {
+      chatId: chatIdStr,
+      agentId: AGENT_ID,
+      sessionId: oldSessionId,
+    });
+    clearSession(chatIdStr, AGENT_ID);
     await ctx.reply('Session cleared. Memories will fade naturally over time.');
   });
 

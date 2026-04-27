@@ -66,7 +66,7 @@ export async function loadHooksFromDir(dir: string, registry: HookRegistry): Pro
   let entries: string[];
   try {
     entries = fs.readdirSync(dir)
-      .filter((f) => f.endsWith('.js') || f.endsWith('.ts'))
+      .filter((f) => (f.endsWith('.js') || f.endsWith('.ts')) && !f.includes('.test.') && !f.endsWith('.d.ts'))
       .sort();
   } catch {
     logger.warn({ dir }, 'Could not read hooks directory');

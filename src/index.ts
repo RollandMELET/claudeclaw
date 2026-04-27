@@ -174,7 +174,7 @@ async function main(): Promise<void> {
 
   cleanupOldUploads();
 
-  const bot = createBot();
+  const bot = await createBot();
 
   // Dashboard only runs in the main bot process
   if (AGENT_ID === 'main') {

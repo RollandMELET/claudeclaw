@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./logger.js', () => ({
@@ -9,7 +13,7 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { createHookRegistry, runHooks } from './hooks.js';
+import { createHookRegistry, loadHooksFromDir, runHooks } from './hooks.js';
 import type { HookContext, HookFn } from './hooks.js';
 
 const baseCtx: HookContext = {
@@ -123,5 +127,43 @@ describe('runHooks', () => {
 
     await runHooks([hookReject, hookOk], baseCtx);
     expect(hookOk).toHaveBeenCalledOnce();
+  });
+});
+
+// ── loadHooksFromDir filtering ──────────────────────────────────────
+
+describe('loadHooksFromDir', () => {
+  it('skips .test.js, .test.ts and .d.ts files', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-filter-'));
+    try {
+      // A real hook with a preMessage export.
+      fs.writeFileSync(
+        path.join(tmpDir, 'real-hook.js'),
+        `export async function preMessage(ctx) { ctx.message = 'hooked'; }\n`,
+      );
+      // These should all be ignored — if the loader tried to import them,
+      // it would either find no hooks (best case) or crash (worst case
+      // for .test.js importing vitest at module load time).
+      fs.writeFileSync(
+        path.join(tmpDir, 'real-hook.test.js'),
+        `import { describe } from 'vitest';\ndescribe('x', () => {});\n`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, 'something.d.ts'),
+        `export declare function preMessage(): Promise<void>;\n`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, 'integration.test.js'),
+        `import { describe } from 'vitest';\ndescribe('y', () => {});\n`,
+      );
+
+      const registry = createHookRegistry();
+      await loadHooksFromDir(tmpDir, registry);
+
+      // Exactly one preMessage hook should be registered (from real-hook.js).
+      expect(registry.preMessage).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
