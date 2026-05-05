@@ -70,7 +70,6 @@ const ACK_PATTERNS = new Set([
   'cest fait',  // "c'est fait" normalized
   'ras',        // "rien à signaler"
   'vu',
-  'noté',
   'note',       // "noté" without accent
   // Go-ahead
   'vasy',       // "vas-y" normalized (hyphen stripped, no space added)

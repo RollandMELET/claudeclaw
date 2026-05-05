@@ -1,6 +1,6 @@
 import fs, { mkdirSync } from 'fs';
-import https from 'https';
 import http from 'http';
+import https from 'https';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -563,20 +563,23 @@ async function synthesizeSpeechGemini(text: string): Promise<Buffer> {
   }
 }
 
-// -- TTS: Kokoro (local Docker, OpenAI-compatible) ------------------------------------
+// ── TTS: Kokoro (local OpenAI-compatible) ────────────────────────────────────
 
 /**
- * Convert text to speech using Kokoro TTS (local Docker container).
- * API is OpenAI-compatible. Returns OGG Opus audio.
+ * Convert text to speech using a local OpenAI-compatible TTS server.
+ * Kokoro (https://github.com/remsky/Kokoro-FastAPI) is the reference
+ * implementation, but any server supporting /v1/audio/speech works.
+ * Returns OGG Opus audio. Voice and model are configurable via env vars
+ * (KOKORO_VOICE, KOKORO_MODEL) — defaults to ff_siwis (French female).
  */
 async function synthesizeSpeechKokoro(text: string): Promise<Buffer> {
-  const env = readEnvFile(['KOKORO_URL']);
+  const env = readEnvFile(['KOKORO_URL', 'KOKORO_VOICE', 'KOKORO_MODEL']);
   const baseUrl = env.KOKORO_URL || 'http://localhost:8880';
 
   const payload = JSON.stringify({
-    model: 'kokoro',
+    model: env.KOKORO_MODEL || 'kokoro',
     input: text,
-    voice: 'ff_siwis',
+    voice: env.KOKORO_VOICE || 'ff_siwis',
     response_format: 'opus',
   });
 
@@ -659,6 +662,7 @@ export async function synthesizeSpeechLocal(text: string): Promise<Buffer> {
 //   6. Gradium — existing cloud provider, free tier
 //   7. macOS say — ultimate fallback
 
+
 export async function synthesizeSpeech(text: string): Promise<Buffer> {
   const env = readEnvFile([
     'VOXTRAL_LOCAL_URL', 'MISTRAL_API_KEY',
@@ -726,7 +730,7 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
       const rawOpus = await synthesizeSpeechGradium(text);
       return await toOggOpus(rawOpus);
     } catch (err) {
-      logger.warn({ err }, 'Gradium TTS failed, trying local fallback');
+      logger.warn({ err }, 'Gradium TTS failed, trying next provider');
     }
   }
 

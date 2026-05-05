@@ -63,7 +63,7 @@ describe('config — ccos phase 0 env vars (defaults)', () => {
 
   it('SMART_ROUTING_CHEAP_MODEL defaults to "haiku"', async () => {
     const cfg = await loadConfig();
-    expect(cfg.SMART_ROUTING_CHEAP_MODEL).toBe('haiku');
+    expect(cfg.SMART_ROUTING_CHEAP_MODEL).toBe('claude-haiku-4-5');
   });
 
   it('SHOW_COST_FOOTER defaults to "compact"', async () => {

@@ -22,19 +22,21 @@ const envConfig = readEnvFile([
   'DB_ENCRYPTION_KEY',
   'GOOGLE_API_KEY',
   'AGENT_TIMEOUT_MS',
+  'AGENT_MAX_TURNS',
   'SECURITY_PIN_HASH',
   'IDLE_LOCK_MINUTES',
   'EMERGENCY_KILL_PHRASE',
   'STREAM_STRATEGY',
-  // ── ccos phase 0 ───────────────────────────────────────────────────
-  'AGENT_MAX_TURNS',
+  'MODEL_FALLBACK_CHAIN',
   'SMART_ROUTING_ENABLED',
   'SMART_ROUTING_CHEAP_MODEL',
   'SHOW_COST_FOOTER',
   'DAILY_COST_BUDGET',
   'HOURLY_TOKEN_BUDGET',
   'EXFILTRATION_GUARD_ENABLED',
+  'PROTECTED_ENV_VARS',
   'MEMORY_NUDGE_INTERVAL_TURNS',
+  'MEMORY_NUDGE_INTERVAL_HOURS',
   'WARROOM_ENABLED',
   'WARROOM_PORT',
   'WARROOM_TEXT_INPUT',
@@ -54,7 +56,7 @@ export let agentObsidianConfig: { vault: string; folders: string[]; readOnly?: s
 export let agentSystemPrompt: string | undefined; // loaded from agents/{id}/CLAUDE.md
 // undefined = all MCPs exposed (default). Empty array = deny all.
 // Specific list = only those MCPs exposed to this agent.
-export let agentMcpAllowlist: string[] | undefined;
+export let agentMcpAllowlist: string[] | undefined; // from agent.yaml mcp_servers
 
 export function setAgentOverrides(opts: {
   agentId: string;
@@ -72,6 +74,15 @@ export function setAgentOverrides(opts: {
   agentObsidianConfig = opts.obsidian;
   agentSystemPrompt = opts.systemPrompt;
   agentMcpAllowlist = opts.mcpServers;
+}
+
+/** Update just the system prompt (CLAUDE.md content). Used by the
+ *  dashboard's agent-files PUT endpoint after editing main's CLAUDE.md
+ *  so the next NEW session in the bot picks up the change without
+ *  requiring a process restart. Sub-agents don't need this — the SDK
+ *  re-reads CLAUDE.md from cwd via settingSources on every turn. */
+export function updateAgentSystemPrompt(next: string | undefined): void {
+  agentSystemPrompt = next;
 }
 
 export const TELEGRAM_BOT_TOKEN =
@@ -140,6 +151,15 @@ export const AGENT_TIMEOUT_MS = parseInt(
   10,
 );
 
+// Maximum number of agentic turns (tool-use rounds) per query.
+// Prevents runaway loops when external services fail (e.g. stale cookies causing
+// 40+ sequential Bash retries). 0 = unlimited (SDK default).
+// Default: 30 turns, which is generous for complex skills but stops spirals.
+export const AGENT_MAX_TURNS = parseInt(
+  process.env.AGENT_MAX_TURNS || envConfig.AGENT_MAX_TURNS || '30',
+  10,
+);
+
 // Context window limit for the model. Opus 4.6 (1M context) = 1,000,000.
 // Override via CONTEXT_LIMIT in .env if using a different model variant.
 export const CONTEXT_LIMIT = parseInt(
@@ -193,15 +213,10 @@ export const IDLE_LOCK_MINUTES = parseInt(
 export const EMERGENCY_KILL_PHRASE =
   process.env.EMERGENCY_KILL_PHRASE || envConfig.EMERGENCY_KILL_PHRASE || '';
 
-// ── ccos phase 0 — claudeclaw-os feature flags ───────────────────────
-// All new vars are optional with sensible defaults. Nothing forces existing
-// behavior to change.
+// ── ccos / Hermes enhancements ───────────────────────────────────────
 
 // Max agentic turns per query. Caps runaway tool-use loops. Default: 30.
-export const AGENT_MAX_TURNS = parseInt(
-  process.env.AGENT_MAX_TURNS || envConfig.AGENT_MAX_TURNS || '30',
-  10,
-);
+// (also in readEnvFile above — kept here as single-source-of-truth export)
 
 // Engine backend for agent invocation (docs/rfc-sdk-engine.md).
 //   cli — spawn the claude CLI subprocess (default, current behavior)
@@ -210,17 +225,23 @@ export type EngineKind = 'cli' | 'sdk';
 export const ENGINE: EngineKind =
   ((process.env.ENGINE || envConfig.ENGINE || 'cli').toLowerCase() as EngineKind);
 
+// Model fallback chain: comma-separated model IDs. When the primary model
+// fails with an overloaded/billing error, try the next model in the chain.
+// Example: "claude-sonnet-4-6,claude-haiku-4-5"
+export const MODEL_FALLBACK_CHAIN = (
+  process.env.MODEL_FALLBACK_CHAIN || envConfig.MODEL_FALLBACK_CHAIN || ''
+).split(',').map((s) => s.trim()).filter(Boolean);
+
 // Smart routing: dispatches incoming messages to the best-fit agent using
 // a cheap classifier. Default: disabled (keeps current explicit-bot routing).
 export const SMART_ROUTING_ENABLED =
-  (process.env.SMART_ROUTING_ENABLED || envConfig.SMART_ROUTING_ENABLED || '')
-    .toLowerCase() === 'true';
+  (process.env.SMART_ROUTING_ENABLED || envConfig.SMART_ROUTING_ENABLED || 'false').toLowerCase() === 'true';
 
 // Model used for the smart-routing classifier call. Default: haiku.
 export const SMART_ROUTING_CHEAP_MODEL =
   process.env.SMART_ROUTING_CHEAP_MODEL ||
   envConfig.SMART_ROUTING_CHEAP_MODEL ||
-  'haiku';
+  'claude-haiku-4-5';
 
 // Cost/usage footer displayed with agent responses.
 //   off     — no footer
@@ -252,12 +273,22 @@ export const EXFILTRATION_GUARD_ENABLED =
     'true')
     .toLowerCase() !== 'false';
 
-// Memory nudge : trigger a "what's worth remembering?" pass every N turns.
+// List of env var names to protect from exfiltration.
+export const PROTECTED_ENV_VARS = (
+  process.env.PROTECTED_ENV_VARS || envConfig.PROTECTED_ENV_VARS ||
+  'ANTHROPIC_API_KEY,CLAUDE_CODE_OAUTH_TOKEN,DB_ENCRYPTION_KEY,TELEGRAM_BOT_TOKEN,SLACK_USER_TOKEN,GROQ_API_KEY,ELEVENLABS_API_KEY,GOOGLE_API_KEY'
+).split(',').map((s) => s.trim()).filter(Boolean);
+
+// Memory nudge: trigger a "what's worth remembering?" pass every N turns.
 // 0 = disabled.
 export const MEMORY_NUDGE_INTERVAL_TURNS = parseInt(
   process.env.MEMORY_NUDGE_INTERVAL_TURNS ||
     envConfig.MEMORY_NUDGE_INTERVAL_TURNS ||
     '0',
+  10,
+);
+export const MEMORY_NUDGE_INTERVAL_HOURS = parseInt(
+  process.env.MEMORY_NUDGE_INTERVAL_HOURS || envConfig.MEMORY_NUDGE_INTERVAL_HOURS || '2',
   10,
 );
 
@@ -313,4 +344,3 @@ export const WARROOM_SETTINGS_ENABLED = (() => {
 // <PROJECT_ROOT>/config/user-preferences.yaml (gitignored).
 export const WARROOM_USER_PREFS_FILE =
   process.env.WARROOM_USER_PREFS_FILE || envConfig.WARROOM_USER_PREFS_FILE || '';
-
