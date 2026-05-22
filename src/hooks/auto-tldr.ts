@@ -28,7 +28,7 @@ import { getSessionConversation } from '../db.js';
 const MIN_TURNS = 10;
 const GEMINI_TIMEOUT_MS = 4500;
 const SUMMARY_WORD_BUDGET = 150;
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_TEMPERATURE = 0.1;
 const GEMINI_MAX_OUTPUT_TOKENS = 300;
 
