@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DB_ENCRYPTION_KEY, STORE_DIR } from './config.js';
+import { createDppSchema } from './dpp/db.js';
 import { cosineSimilarity } from './embeddings.js';
 import { logger } from './logger.js';
 
@@ -395,6 +396,9 @@ function createSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_skill_usage_skill ON skill_usage(skill_id, last_invoked DESC);
   `);
+
+  // Module DPP Battery Intelligence (T9) : tables additives, idempotentes.
+  createDppSchema(database);
 }
 
 export function initDatabase(): void {

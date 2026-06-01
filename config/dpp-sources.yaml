@@ -1,0 +1,73 @@
+# Registre des sources — DPP Battery Intelligence (F-01)
+# Fiabilite = tier (deterministe). Edite ce fichier sans toucher au code de collecte.
+#   T1 Officiel / juridique (fait)
+#   T2 Normalisation / institutionnel (haute)
+#   T3 Experts / cabinets (interpretation)   -> Phase 3
+#   T4 Social / presse (a corroborer)        -> Phase 3
+# poles : reglementaire | normalisation | institutionnel | experts | social
+# methode : eurlex-rss | eping-api | institutional-scrape
+
+sources:
+  - id: eurlex-32023R1542
+    nom: "EUR-Lex - Reglement (UE) 2023/1542 (batteries)"
+    url: "https://eur-lex.europa.eu/legal-content/FR/ALL/?uri=CELEX:32023R1542"
+    pole: reglementaire
+    tier: T1
+    methode: eurlex-rss
+    frequence: daily
+
+  - id: eurlex-actes-delegues
+    nom: "EUR-Lex - Actes delegues et d'execution 2023/1542"
+    url: "https://eur-lex.europa.eu/search.html?DTS_SUBDOM=LEGISLATION&type=advanced&qid=batteries"
+    pole: reglementaire
+    tier: T1
+    methode: eurlex-rss
+    frequence: daily
+
+  - id: eping-omc-batteries
+    nom: "ePing OMC - Notifications TBT batteries"
+    url: "https://eping.wto.org/en/Search?domainIds=&keywords=batteries"
+    pole: reglementaire
+    tier: T1
+    methode: eping-api
+    frequence: daily
+
+  - id: dg-envi-batteries
+    nom: "DG ENVI - Batteries et dechets de batteries"
+    url: "https://environment.ec.europa.eu/topics/waste-and-recycling/batteries_en"
+    pole: institutionnel
+    tier: T2
+    methode: institutional-scrape
+    frequence: weekly
+
+  - id: cen-cenelec-jtc24
+    nom: "CEN-CENELEC JTC 24 - Normalisation batteries / DPP"
+    url: "https://www.cencenelec.eu/areas-of-work/cen-cenelec-topics/batteries/"
+    pole: normalisation
+    tier: T2
+    methode: institutional-scrape
+    frequence: weekly
+
+  - id: jrc-batteries
+    nom: "JRC - Joint Research Centre, travaux batteries"
+    url: "https://joint-research-centre.ec.europa.eu/scientific-tools-databases/product-environmental-footprint_en"
+    pole: institutionnel
+    tier: T2
+    methode: institutional-scrape
+    frequence: weekly
+
+  - id: din-batteries
+    nom: "DIN - Normalisation allemande batteries"
+    url: "https://www.din.de/en/innovation-and-research/batteries"
+    pole: normalisation
+    tier: T2
+    methode: institutional-scrape
+    frequence: weekly
+
+  - id: battery-pass
+    nom: "Battery Pass - Consortium DPP batterie"
+    url: "https://thebatterypass.eu/"
+    pole: institutionnel
+    tier: T2
+    methode: institutional-scrape
+    frequence: weekly
