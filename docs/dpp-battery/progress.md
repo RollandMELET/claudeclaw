@@ -75,5 +75,13 @@
 - **Vérifs** : `tsc` clean. **Suite complète 620/620 GREEN** (59 fichiers), dont bot 27, dpp 68, db 55, scheduler.
 - WIP existant de index.ts (drop_pending_updates) préservé ; ajout additif uniquement. Rien committé.
 
-## En cours
-*(rempli au fil de l'implémentation)*
+## [2026-06-02] — Livraison : commit, PR, merge, nettoyage
+- [x] Commit `68a01cc` du module `src/dpp/` + raccords (db.ts, index.ts hunk raccord, bot.ts) + docs + config. WIP `cli-engine.ts` exclu.
+- [x] Branche `feat/dpp-battery-intel` poussée sur origin.
+- [x] **PR #5** ouverte puis **MERGÉE** dans `main` (merge commit `a0a35d2`, 2026-06-02 11:42 UTC).
+- [x] `main` local synchronisé (fast-forward).
+- [x] Branche `feat/dpp-battery-intel` **supprimée** (local + remote).
+- WIP non lié (`cli-engine.ts/.test.ts`, `index.ts` drop_pending_updates) préservé dans le working tree.
+
+## Statut : MVP DPP Battery Intelligence livré et mergé sur main.
+Reste hors-MVP : F-10 (boucle veille→réindex, Phase 4).
