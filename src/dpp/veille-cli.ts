@@ -21,7 +21,7 @@ export const VEILLE_TASK_ID = 'dpp-veille-daily';
 export const VEILLE_DEFAULT_CRON = '0 7 * * *';
 /** Prompt de la tache planifiee : ordonne au daemon de lancer cette CLI. */
 export const VEILLE_TASK_PROMPT =
-  'Lance la veille DPP batterie : execute `node dist/dpp/veille-cli.js` et rapporte le resume.';
+  'Lance la veille DPP batterie : depuis la racine du projet, execute `NODE_EXTRA_CA_CERTS=config/certs/globalsign-rsa-ov-ssl-ca-2018.pem node dist/dpp/veille-cli.js` et rapporte le resume.';
 
 /** Resume lisible d'un cycle de veille. */
 export function formatSummary(r: VeilleResult): string {

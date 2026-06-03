@@ -32,9 +32,21 @@ const COLLECTORS: Record<CollectMethod, Collector> = {
   'institutional-scrape': collectInstitutional,
 };
 
-/** GET HTTP par defaut (prod), via fetch global (Node >= 20). */
+/**
+ * GET HTTP par defaut (prod), via fetch global (Node >= 20). Envoie un User-Agent
+ * navigateur : nombre de sites institutionnels (ex: CEN-CENELEC) rejettent la connexion
+ * (WAF anti-bot) sans UA, ce qui se manifeste par un 'fetch failed'. Timeout 20s.
+ */
 export async function defaultHttpGet(url: string): Promise<string> {
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      Accept:
+        'text/html,application/xhtml+xml,application/xml,application/rss+xml;q=0.9,*/*;q=0.8',
+    },
+    signal: AbortSignal.timeout(20_000),
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status} sur ${url}`);
   return res.text();
 }

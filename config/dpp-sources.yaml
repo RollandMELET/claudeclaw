@@ -1,4 +1,4 @@
-# Registre des sources — DPP Battery Intelligence (F-01)
+# Registre des sources - DPP Battery Intelligence (F-01)
 # Fiabilite = tier (deterministe). Edite ce fichier sans toucher au code de collecte.
 #   T1 Officiel / juridique (fait)
 #   T2 Normalisation / institutionnel (haute)
@@ -6,30 +6,36 @@
 #   T4 Social / presse (a corroborer)        -> Phase 3
 # poles : reglementaire | normalisation | institutionnel | experts | social
 # methode : eurlex-rss | eping-api | institutional-scrape
+# NOTE 2026-06-03 : EUR-Lex ne fournit pas de RSS par requete sans login (flux Cellar trop
+#   larges) -> les sources EUR-Lex passent en institutional-scrape sur pages server-rendered.
+#   ePing OMC n'a pas d'API publique sans cle (cf. apiportal.wto.org) -> scrape degrade,
+#   integration API a faire en Phase 3.
 
 sources:
   - id: eurlex-32023R1542
-    nom: "EUR-Lex - Reglement (UE) 2023/1542 (batteries)"
-    url: "https://eur-lex.europa.eu/legal-content/FR/ALL/?uri=CELEX:32023R1542"
+    nom: "EUR-Lex - Reglement (UE) 2023/1542 (batteries), texte en vigueur"
+    url: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542"
     pole: reglementaire
     tier: T1
-    methode: eurlex-rss
+    methode: institutional-scrape
     frequence: daily
 
   - id: eurlex-actes-delegues
-    nom: "EUR-Lex - Actes delegues et d'execution 2023/1542"
-    url: "https://eur-lex.europa.eu/search.html?DTS_SUBDOM=LEGISLATION&type=advanced&qid=batteries"
+    nom: "EUR-Lex - Recherche actes delegues et d'execution (batteries)"
+    url: "https://eur-lex.europa.eu/search.html?scope=EURLEX&text=battery%20regulation&type=quick&lang=en"
     pole: reglementaire
     tier: T1
-    methode: eurlex-rss
+    methode: institutional-scrape
     frequence: daily
 
   - id: eping-omc-batteries
-    nom: "ePing OMC - Notifications TBT batteries"
-    url: "https://eping.wto.org/en/Search?domainIds=&keywords=batteries"
+    nom: "ePing OMC - Notifications TBT batteries (scrape degrade)"
+    # TODO Phase 3 : remplacer par l'API WTO (apiportal.wto.org, cle requise). L'API SPA
+    # eping.wto.org/api n'est pas exposee en GET simple. En attendant, snapshot de la page.
+    url: "https://eping.wto.org/en/Search/Index?domainIds=2"
     pole: reglementaire
     tier: T1
-    methode: eping-api
+    methode: institutional-scrape
     frequence: daily
 
   - id: dg-envi-batteries
@@ -49,16 +55,16 @@ sources:
     frequence: weekly
 
   - id: jrc-batteries
-    nom: "JRC - Joint Research Centre, travaux batteries"
-    url: "https://joint-research-centre.ec.europa.eu/scientific-tools-databases/product-environmental-footprint_en"
+    nom: "JRC - Joint Research Centre, batteries"
+    url: "https://joint-research-centre.ec.europa.eu/jrc-highlights-report-2024/batteries_en"
     pole: institutionnel
     tier: T2
     methode: institutional-scrape
     frequence: weekly
 
   - id: din-batteries
-    nom: "DIN - Normalisation allemande batteries"
-    url: "https://www.din.de/en/innovation-and-research/batteries"
+    nom: "DKE/DIN - Normalisation allemande, reglement batteries UE 2023/1542"
+    url: "https://www.dke.de/de/arbeitsfelder/components-technologies/news/die-europaeische-batterieverordnung-kommt"
     pole: normalisation
     tier: T2
     methode: institutional-scrape
