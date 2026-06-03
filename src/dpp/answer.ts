@@ -35,7 +35,7 @@ function buildPrompt(query: string, chunks: RetrievedChunk[]): string {
     .map((c, i) => `[Passage ${i + 1} | ${citationOf(c.notePath)}]\n${c.chunkText}`)
     .join('\n\n');
   return [
-    'Tu reponds a une question sur le DPP batterie EN T APPUYANT UNIQUEMENT sur les passages ci-dessous.',
+    'Tu reponds a une question sur le DPP et la reglementation produits de l UE (batteries 2023/1542, CPR produits de construction, ESPR ecoconception...) EN T APPUYANT UNIQUEMENT sur les passages ci-dessous.',
     'N invente rien. Si les passages ne suffisent pas, dis-le. Cite les notes sous la forme [[nom]].',
     '',
     passages,
