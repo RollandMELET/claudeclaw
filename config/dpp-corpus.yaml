@@ -1,0 +1,30 @@
+# Corpus RAG DPP - dossiers du vault Obsidian a indexer pour le chatbot /dpp.
+# Pour ETENDRE le RAG (autres domaines DPP) : ajoute une entree { path, tier } puis
+# relance `npm run dpp:index`. Le RAG est agnostique au domaine (embeddings + cosinus).
+#
+# tier = fiabilite du contenu (sert au scoring de confiance des reponses) :
+#   T1 officiel / juridique | T2 normalisation / institutionnel
+#   T3 experts / cabinets   | T4 social / presse (a corroborer)
+#
+# Scope actuel : DPP batterie. Decommente / ajoute des dossiers pour couvrir
+# DPP general, CPR/RPC, ESPR/SPR, CPR par filiere, SPR par produit, etc.
+
+corpus:
+  - path: "005 - Ressource/REGLEMENTS EU/Batteries"
+    tier: T1
+  - path: "002 - Projets/DPP/DPP-EU-Batteries"
+    tier: T2
+
+# Exemples a activer plus tard (autres domaines) :
+#  - path: "005 - Ressource/REGLEMENTS EU/DPP"
+#    tier: T1
+#  - path: "005 - Ressource/REGLEMENTS EU/CPR - RPC"
+#    tier: T1
+#  - path: "005 - Ressource/REGLEMENTS EU/ESPR"
+#    tier: T1
+#  - path: "002 - Projets/DPP/EU-DPP-Service-Provider"
+#    tier: T2
+
+# Dossiers/fichiers ignores recursivement (bruit, dumps bruts).
+exclude:
+  - "_archive"
