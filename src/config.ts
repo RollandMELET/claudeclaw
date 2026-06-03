@@ -41,6 +41,7 @@ const envConfig = readEnvFile([
   'WARROOM_RESUME_ENABLED',
   'WARROOM_SETTINGS_ENABLED',
   'WARROOM_USER_PREFS_FILE',
+  'OBSIDIAN_VAULT',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -116,6 +117,14 @@ export function expandHome(p: string): string {
 
 const rawConfigDir =
   process.env.CLAUDECLAW_CONFIG || envConfig.CLAUDECLAW_CONFIG || '~/.claudeclaw';
+
+/**
+ * Racine du vault Obsidian (CHATTERS). Fallback pour les outils standalone
+ * (ex: CLI veille DPP) lances hors contexte d'agent, qui n'ont donc pas
+ * agentObsidianConfig.vault. Defini dans .env (OBSIDIAN_VAULT).
+ */
+export const OBSIDIAN_VAULT =
+  process.env.OBSIDIAN_VAULT || envConfig.OBSIDIAN_VAULT || '';
 
 /**
  * Absolute path to the external config directory.

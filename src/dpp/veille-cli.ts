@@ -4,7 +4,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { agentObsidianConfig } from './../config.js';
+import { agentObsidianConfig, OBSIDIAN_VAULT } from './../config.js';
 import { createScheduledTask, getAllScheduledTasks, getDatabase, initDatabase } from './../db.js';
 import { logger } from './../logger.js';
 import { computeNextRun } from './../scheduler.js';
@@ -42,9 +42,9 @@ export async function runVeilleCli(deps: VeilleDeps): Promise<string> {
 
 /** Construit les deps reelles (prod) depuis l'environnement du daemon. */
 export function buildVeilleDeps(): VeilleDeps {
-  const vault = agentObsidianConfig?.vault;
+  const vault = agentObsidianConfig?.vault || OBSIDIAN_VAULT;
   if (!vault) {
-    throw new Error('agentObsidianConfig.vault non configure : impossible de localiser le vault pour le digest.');
+    throw new Error('Vault non configure (agentObsidianConfig.vault ou OBSIDIAN_VAULT dans .env) : impossible de localiser le vault pour le digest.');
   }
   return {
     db: getDatabase(),
