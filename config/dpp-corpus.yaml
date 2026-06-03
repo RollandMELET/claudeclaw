@@ -14,6 +14,10 @@ corpus:
     tier: T1
   - path: "002 - Projets/DPP/DPP-EU-Batteries"
     tier: T2
+  - path: "005 - Ressource/REGLEMENTS EU/CPR - RPC"
+    tier: T1
+  - path: "005 - Ressource/REGLEMENTS EU/ESPR"
+    tier: T1
 
 # Exemples a activer plus tard (autres domaines) :
 #  - path: "005 - Ressource/REGLEMENTS EU/DPP"
