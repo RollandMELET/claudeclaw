@@ -337,6 +337,18 @@ async function main(): Promise<void> {
       AGENT_ID,
     );
 
+    // Routine veille DPP batterie : enregistre la tache cron quotidienne (main uniquement,
+    // idempotent). La tache execute la CLI dpp:veille via le scheduler prompt-based existant.
+    if (AGENT_ID === 'main') {
+      try {
+        const { registerVeilleRoutine } = await import('./dpp/veille-cli.js');
+        const added = registerVeilleRoutine();
+        logger.info({ added }, added ? 'Routine veille DPP enregistree' : 'Routine veille DPP deja presente');
+      } catch (err) {
+        logger.error({ err }, 'Echec enregistrement routine veille DPP');
+      }
+    }
+
     // Proactive OAuth health monitoring — alerts via Telegram before the
     // Claude CLI token expires. OPT-IN as of 2026-04-10: users were getting
     // spammed with "Expiring soon" alerts on fresh installs (reported by

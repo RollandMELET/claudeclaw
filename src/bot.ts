@@ -33,7 +33,10 @@ import {
   HOURLY_TOKEN_BUDGET,
   PROJECT_ROOT,
 } from './config.js';
-import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getChatPref, setChatPref, deleteChatPref, getChatsWithPref } from './db.js';
+import { clearSession, getRecentConversation, getRecentMemories, getRecentTaskOutputs, getSession, getSessionConversation, logToHiveMind, pinMemory, unpinMemory, setSession, lookupWaChatId, saveWaMessageMap, saveTokenUsage, saveCompactionEvent, getCompactionCount, getChatPref, setChatPref, deleteChatPref, getChatsWithPref, getDatabase } from './db.js';
+import { handleDppChat } from './dpp/chat.js';
+import { runClaude } from './dpp/relevance.js';
+import { embedText } from './embeddings.js';
 import { logger } from './logger.js';
 import { downloadMedia, buildPhotoMessage, buildDocumentMessage, buildVideoMessage } from './media.js';
 import { buildMemoryContext, evaluateMemoryRelevance, saveConversationTurn, shouldNudgeMemory, MEMORY_NUDGE_TEXT } from './memory.js';
@@ -904,6 +907,7 @@ export async function createBot(): Promise<Bot> {
     { command: 'voice', description: 'Toggle voice mode on/off' },
     { command: 'model', description: 'Switch model (opus/sonnet/haiku)' },
     { command: 'memory', description: 'View recent memories' },
+    { command: 'dpp', description: 'Ask the DPP battery corpus (RAG)' },
     { command: 'forget', description: 'Clear session' },
     { command: 'wa', description: 'Recent WhatsApp messages' },
     { command: 'slack', description: 'Recent Slack messages' },
@@ -1120,6 +1124,29 @@ export async function createBot(): Promise<Bot> {
       return `<b>#${m.id}</b> [${m.importance.toFixed(1)}]${pin} ${escapeHtml(m.summary)}${topicStr}`;
     }).join('\n');
     await ctx.reply(`<b>Recent memories</b>\n\n${lines}\n\n<i>/pin &lt;id&gt; to make permanent, /unpin &lt;id&gt; to remove</i>`, { parse_mode: 'HTML' });
+  });
+
+  // /dpp <question> — chatbot RAG sur le corpus DPP batterie (F-09).
+  // Intent dediee : ne route que la commande explicite, n'affecte pas les autres usages.
+  bot.command('dpp', async (ctx) => {
+    if (await replyIfLocked(ctx)) return;
+    const question = (ctx.match ?? '').toString().trim();
+    if (!question) {
+      await ctx.reply('Usage : /dpp <question sur le DPP batterie>');
+      return;
+    }
+    await sendTyping(ctx.api, ctx.chat!.id);
+    try {
+      const answer = await handleDppChat(question, {
+        db: getDatabase(),
+        embed: embedText,
+        llm: runClaude,
+      });
+      await ctx.reply(answer);
+    } catch (err) {
+      logger.error({ err }, 'DPP chat failed');
+      await ctx.reply('Erreur lors de la consultation du corpus DPP.');
+    }
   });
 
   // /pin <id> — make a memory permanent (never decays)
