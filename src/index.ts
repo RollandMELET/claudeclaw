@@ -24,8 +24,13 @@ const AGENT_ID = agentFlagIndex !== -1 ? process.argv[agentFlagIndex + 1] : 'mai
 // Export AGENT_ID to env so child processes (schedule-cli, etc.) inherit it
 process.env.CLAUDECLAW_AGENT_ID = AGENT_ID;
 
+// Whether this process listens for incoming Telegram messages. Main always
+// does; sub-agents follow their agent.yaml `interactive` flag (default true).
+let AGENT_INTERACTIVE = true;
+
 if (AGENT_ID !== 'main') {
   const agentConfig = loadAgentConfig(AGENT_ID);
+  AGENT_INTERACTIVE = agentConfig.interactive !== false;
   const agentDir = resolveAgentDir(AGENT_ID);
   const claudeMdPath = resolveAgentClaudeMd(AGENT_ID);
   let systemPrompt: string | undefined;
@@ -233,6 +238,24 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown());
 
   logger.info({ agentId: AGENT_ID }, 'Starting ClaudeClaw...');
+
+  if (!AGENT_INTERACTIVE) {
+    // Automation-only agent (e.g. cron): no getUpdates polling. It only sends
+    // scheduler results outbound via bot.api.sendMessage, so it never needs to
+    // listen. Skipping bot.start() avoids the 409 getUpdates conflict that
+    // arises when this agent shares a bot token with an interactive instance.
+    // init() fetches botInfo (getMe) without opening a polling loop; the
+    // scheduler's interval and the dashboard server keep the process alive.
+    await bot.init();
+    setTelegramConnected(true);
+    setBotInfo(bot.botInfo.username ?? '', bot.botInfo.first_name ?? 'ClaudeClaw');
+    logger.info(
+      { username: bot.botInfo.username, agentId: AGENT_ID },
+      'ClaudeClaw running (no-poll, outbound only)',
+    );
+    console.log(`\n  ClaudeClaw agent [${AGENT_ID}] online (no-poll): @${bot.botInfo.username}\n`);
+    return;
+  }
 
   await bot.start({
     onStart: (botInfo) => {

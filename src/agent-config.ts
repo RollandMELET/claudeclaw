@@ -23,6 +23,11 @@ export interface AgentConfig {
    * Empty array = deny all MCPs.
    */
   mcpServers?: string[];
+  /** Whether this agent listens for incoming Telegram messages (getUpdates
+   *  polling). Default true. Set false for automation-only agents (e.g. cron)
+   *  that only send scheduler results outbound — this avoids 409 getUpdates
+   *  conflicts when such an agent shares a bot token with another instance. */
+  interactive?: boolean;
 }
 
 /**
@@ -101,7 +106,10 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     mcpServers = mcpRaw.map(String);
   }
 
-  return { name, description, botTokenEnv, botToken, model, obsidian, mcpServers };
+  // Default true: only opt out of polling when explicitly set to false.
+  const interactive = raw['interactive'] === false ? false : true;
+
+  return { name, description, botTokenEnv, botToken, model, obsidian, mcpServers, interactive };
 }
 
 /** Update the model field in an agent's agent.yaml file. */
