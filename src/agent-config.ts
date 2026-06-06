@@ -56,6 +56,11 @@ export interface AgentConfig {
   /** Display name shown in the meeting ("Your Agent wants to join"). Falls
    *  back to the agent's name or id with first letter capitalized. */
   meetBotName?: string;
+  /** Whether this agent listens for incoming Telegram messages (getUpdates
+   *  polling). Default true. Set false for automation-only agents (e.g. cron)
+   *  that only send scheduler results outbound — this avoids 409 getUpdates
+   *  conflicts when such an agent shares a bot token with another instance. */
+  interactive?: boolean;
 }
 
 /**
@@ -135,6 +140,8 @@ export function loadAgentConfig(agentId: string): AgentConfig {
   const warroomTools = raw['warroom_tools'] as string[] | undefined;
   const meetVoiceId = typeof raw['meet_voice_id'] === 'string' ? (raw['meet_voice_id'] as string) : undefined;
   const meetBotName = typeof raw['meet_bot_name'] === 'string' ? (raw['meet_bot_name'] as string) : undefined;
+  // Default true: only opt out of polling when explicitly set to false.
+  const interactive = raw['interactive'] === false ? false : true;
 
   return {
     name,
@@ -147,6 +154,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     obsidian,
     meetVoiceId,
     meetBotName,
+    interactive,
   };
 }
 
