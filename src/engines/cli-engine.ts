@@ -70,10 +70,13 @@ export class CliEngine implements Engine {
   ): AsyncIterable<EngineEvent> {
     const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
     const sdkEnv: Record<string, string | undefined> = { ...process.env };
+    // OAuth Max prioritaire : si le token OAuth est present, NE PAS exposer
+    // ANTHROPIC_API_KEY au SDK (sinon le CLI le prefere et facture en
+    // pay-per-token -> "Credit balance is too low" sur l'abonnement Max).
     if (secrets.CLAUDE_CODE_OAUTH_TOKEN) {
       sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
-    }
-    if (secrets.ANTHROPIC_API_KEY) {
+      delete sdkEnv.ANTHROPIC_API_KEY;
+    } else if (secrets.ANTHROPIC_API_KEY) {
       sdkEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
     }
 

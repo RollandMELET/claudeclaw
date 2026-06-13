@@ -312,6 +312,13 @@ export function getScrubbedSdkEnv(
     }
   }
 
+  // OAuth Max prioritaire : si le token OAuth est present (process.env ou
+  // re-injecte), retirer ANTHROPIC_API_KEY pour que le CLI n'opte pas pour
+  // le pay-per-token -> "Credit balance is too low" sur l'abonnement Max.
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+    delete env.ANTHROPIC_API_KEY;
+  }
+
   return env;
 }
 
