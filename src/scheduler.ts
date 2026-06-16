@@ -20,8 +20,11 @@ import { formatForTelegram, splitMessage } from './bot.js';
 
 type Sender = (text: string) => Promise<void>;
 
-/** Max time (ms) a scheduled task can run before being killed. */
-const TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+/** Max time (ms) a scheduled task can run before being killed.
+ *  Configurable via SCHEDULER_TASK_TIMEOUT_MS ; default aligned on AGENT_TIMEOUT_MS (15 min)
+ *  so the scheduler no longer kills a task the in-process agent is still allowed to run.
+ *  Was a hard 10 min, which timed out the variable-length 16:00 /mailcheck run. */
+const TASK_TIMEOUT_MS = Number(process.env.SCHEDULER_TASK_TIMEOUT_MS) || 15 * 60 * 1000; // 15 minutes
 
 let sender: Sender;
 
