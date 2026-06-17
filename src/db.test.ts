@@ -428,11 +428,11 @@ describe('ccos phase 0 tables', () => {
       const now = Math.floor(Date.now() / 1000);
       db.prepare(`
         INSERT INTO meet_sessions
-          (id, agent_id, meet_url, platform, provider, status, voice_id,
+          (id, agent_id, meet_url, bot_name, platform, provider, status, voice_id,
            image_path, brief_path, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        'ms-1', 'research', 'https://meet.google.com/abc',
+        'ms-1', 'research', 'https://meet.google.com/abc', 'ClaudeClaw',
         'google_meet', 'recall', 'joining', 'voice-fr',
         '/tmp/avatar.png', '/tmp/brief.md', now,
       );
@@ -449,8 +449,8 @@ describe('ccos phase 0 tables', () => {
       const db = _testDb();
       const now = Math.floor(Date.now() / 1000);
       db.prepare(
-        `INSERT INTO meet_sessions (id, agent_id, created_at) VALUES (?, ?, ?)`,
-      ).run('ms-2', 'main', now);
+        `INSERT INTO meet_sessions (id, agent_id, meet_url, bot_name, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run('ms-2', 'main', 'https://meet.google.com/default', 'ClaudeClaw', now);
       const row = db
         .prepare('SELECT * FROM meet_sessions WHERE id = ?')
         .get('ms-2') as Record<string, unknown>;
@@ -549,7 +549,7 @@ describe('ccos phase 0 tables', () => {
         .prepare('SELECT * FROM skill_health WHERE skill_id = ?')
         .get('mailcheck') as Record<string, unknown>;
       expect(row.status).toBe('unchecked');
-      expect(row.error_msg).toBeNull();
+      expect(row.error_msg).toBe('');
     });
 
     it('UPSERT via INSERT OR REPLACE updates last_check and status', () => {
@@ -577,16 +577,16 @@ describe('ccos phase 0 tables', () => {
       const db = _testDb();
       const now = Math.floor(Date.now() / 1000);
       db.prepare(
-        `INSERT INTO skill_usage (skill_id, invocations, last_invoked) VALUES (?, ?, ?)`,
-      ).run('daily-plan', 1, now);
+        `INSERT INTO skill_usage (skill_id, triggered_at, tokens_used, succeeded) VALUES (?, ?, ?, ?)`,
+      ).run('daily-plan', now, 100, 1);
       db.prepare(
-        `INSERT INTO skill_usage (skill_id, invocations, last_invoked) VALUES (?, ?, ?)`,
-      ).run('daily-plan', 2, now + 60);
+        `INSERT INTO skill_usage (skill_id, triggered_at, tokens_used, succeeded) VALUES (?, ?, ?, ?)`,
+      ).run('daily-plan', now + 60, 200, 1);
       const rows = db
         .prepare('SELECT * FROM skill_usage WHERE skill_id = ? ORDER BY id')
         .all('daily-plan') as Record<string, unknown>[];
       expect(rows).toHaveLength(2);
-      expect(rows[1].invocations).toBe(2);
+      expect(rows[1].tokens_used).toBe(200);
       expect(rows[1].id).toBeGreaterThan(rows[0].id as number);
     });
   });

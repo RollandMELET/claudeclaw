@@ -37,6 +37,8 @@ export interface VeilleResult {
   digestWritten: boolean;
   alertsSent: number;
   errors: CollectError[];
+  /** Items nouveaux (deja dedup) scores ce cycle. Sert au flag CLI --json (Digest aval). */
+  freshItems: ScoredItem[];
 }
 
 /** Nouveaute = empreinte inconnue OU contenu change sur une empreinte connue (AC-03 dedup). */
@@ -96,5 +98,6 @@ export async function runVeilleDpp(deps: VeilleDeps): Promise<VeilleResult> {
     digestWritten,
     alertsSent,
     errors,
+    freshItems: scored,
   };
 }

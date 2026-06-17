@@ -178,7 +178,7 @@ describe('task state machine', () => {
       expect(tasks[0].last_status).toBe('timeout');
     });
 
-    it('truncates last_result to 4000 chars (db-level cap)', () => {
+    it('truncates last_result to 4000 chars', () => {
       const past = Math.floor(Date.now() / 1000) - 60;
       const futureNextRun = Math.floor(Date.now() / 1000) + 86400;
       createScheduledTask('t1', 'task', '0 9 * * *', past, 'main');

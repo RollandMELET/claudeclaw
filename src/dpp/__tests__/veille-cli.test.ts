@@ -70,9 +70,37 @@ describe('T8: CLI dpp:veille', () => {
         digestWritten: false,
         alertsSent: 0,
         errors: [{ sourceId: 'din-batteries', error: 'HTTP 503' }],
+        freshItems: [],
       });
       expect(s).toContain('digest deja present');
       expect(s).toContain('1 source(s) en echec');
+    });
+  });
+
+  describe('sortie --json', () => {
+    it('runVeilleCli({json:true}) emet un JSON parsable avec les items nouveaux', async () => {
+      const notify = vi.fn(async (_msg: string) => {});
+      const deps: VeilleDeps = {
+        db: openDppTestDb(),
+        sources: SOURCES,
+        httpGet: async () => RSS,
+        relevance: fixedRelevance,
+        notify,
+        digestDir: dir,
+        date: '2024-05-15',
+        now: 1000,
+      };
+      const out = await runVeilleCli(deps, { json: true });
+      const parsed = JSON.parse(out);
+      expect(parsed.collected).toBe(1);
+      expect(parsed.fresh).toBe(1);
+      expect(Array.isArray(parsed.items)).toBe(true);
+      expect(parsed.items).toHaveLength(1);
+      expect(parsed.items[0]).toMatchObject({
+        url: 'https://eur-lex.europa.eu/eli/reg_del/2024/1234',
+        relevance: 0.9,
+      });
+      expect(parsed.items[0].title).toContain('batteries');
     });
   });
 

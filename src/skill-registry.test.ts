@@ -88,10 +88,7 @@ triggers: email, inbox, gmail
 Read and send emails.`,
     );
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const all = getAllSkills();
     // Should find at least the global skill
     const gmailSkill = all.find((s) => s.id === 'gmail');
@@ -104,11 +101,10 @@ Read and send emails.`,
   });
 
   it('handles missing skill directories gracefully', () => {
-    // Point at nonexistent dirs so there is nothing to scan
-    const bogus = path.join(tempRoot, 'nonexistent');
-    expect(() =>
-      initSkillRegistry({ projectRoot: bogus, globalSkillsDir: bogus }),
-    ).not.toThrow();
+    // Remove the skills dirs so there is nothing to scan
+    fs.rmSync(path.join(tempGlobal, '.claude', 'skills'), { recursive: true, force: true });
+    // initSkillRegistry should not throw
+    expect(() => initSkillRegistry(tempRoot)).not.toThrow();
     expect(getAllSkills()).toHaveLength(0);
   });
 });
@@ -130,10 +126,7 @@ triggers: schedule, meeting, calendar
 Create and manage events.`,
     );
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const cal = getAllSkills().find((s) => s.id === 'calendar');
     expect(cal).toBeDefined();
     expect(cal!.name).toBe('Google Calendar');
@@ -154,10 +147,7 @@ Show outstanding tasks from the vault. Supports checkboxes.
 Run /todo to see tasks.`,
     );
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const todo = getAllSkills().find((s) => s.id === 'todo');
     expect(todo).toBeDefined();
     expect(todo!.name).toBe('Task Manager');
@@ -171,10 +161,7 @@ Run /todo to see tasks.`,
       'Just some plain text content here.',
     );
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const skill = getAllSkills().find((s) => s.id === 'my-skill');
     expect(skill).toBeDefined();
     expect(skill!.name).toBe('my-skill');
@@ -205,10 +192,7 @@ triggers: schedule, meeting, calendar
 ---`,
     );
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
   });
 
   it('matches "check my email" to gmail skill', () => {
@@ -248,20 +232,14 @@ triggers: email
 ---`,
     );
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const index = getSkillIndex();
     expect(index).toContain('gmail: Email management');
   });
 
   it('returns empty string when no skills', () => {
     fs.rmSync(path.join(tempGlobal, '.claude', 'skills'), { recursive: true, force: true });
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     expect(getSkillIndex()).toBe('');
   });
 });
@@ -281,19 +259,13 @@ Full instructions here.`;
 
     writeSkill(path.join(tempGlobal, '.claude', 'skills'), 'gmail', content);
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const instructions = getSkillInstructions('gmail');
     expect(instructions).toBe(content);
   });
 
   it('returns null for unknown skill ID', () => {
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     expect(getSkillInstructions('nonexistent')).toBeNull();
   });
 });
@@ -306,10 +278,7 @@ describe('edge cases', () => {
     fs.mkdirSync(hiddenDir, { recursive: true });
     fs.writeFileSync(path.join(hiddenDir, 'SKILL.md'), '# Hidden');
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     expect(getAllSkills().find((s) => s.id === '.hidden')).toBeUndefined();
   });
 
@@ -318,10 +287,7 @@ describe('edge cases', () => {
     fs.mkdirSync(emptyDir, { recursive: true });
     fs.writeFileSync(path.join(emptyDir, 'config.json'), '{}');
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     expect(getAllSkills().find((s) => s.id === 'empty')).toBeUndefined();
   });
 
@@ -330,10 +296,7 @@ describe('edge cases', () => {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'readme.md'), '# Alt Skill\n\nAlt description.');
 
-    initSkillRegistry({
-      projectRoot: tempRoot,
-      globalSkillsDir: path.join(tempGlobal, '.claude', 'skills'),
-    });
+    initSkillRegistry(tempRoot);
     const alt = getAllSkills().find((s) => s.id === 'alt');
     expect(alt).toBeDefined();
     expect(alt!.name).toBe('Alt Skill');

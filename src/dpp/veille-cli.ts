@@ -34,10 +34,23 @@ export function formatSummary(r: VeilleResult): string {
   return parts.join(' | ');
 }
 
-/** Coeur de la CLI : execute un cycle et retourne le resume. Deps injectables (test). */
-export async function runVeilleCli(deps: VeilleDeps): Promise<string> {
+/** Serialise un cycle en JSON pour le Digest aval (items nouveaux + compteurs). */
+export function formatJson(r: VeilleResult): string {
+  return JSON.stringify({
+    collected: r.collected,
+    fresh: r.fresh,
+    alertsSent: r.alertsSent,
+    digestPath: r.digestPath,
+    digestWritten: r.digestWritten,
+    errors: r.errors,
+    items: r.freshItems,
+  });
+}
+
+/** Coeur de la CLI : execute un cycle et retourne le resume (ou le JSON si opts.json). Deps injectables (test). */
+export async function runVeilleCli(deps: VeilleDeps, opts: { json?: boolean } = {}): Promise<string> {
   const result = await runVeilleDpp(deps);
-  return formatSummary(result);
+  return opts.json ? formatJson(result) : formatSummary(result);
 }
 
 /** Construit les deps reelles (prod) depuis l'environnement du daemon. */
@@ -70,9 +83,10 @@ export function registerVeilleRoutine(cron: string = VEILLE_DEFAULT_CRON, agentI
 /** Point d'entree CLI. */
 async function main(): Promise<void> {
   initDatabase();
-  const summary = await runVeilleCli(buildVeilleDeps());
+  const json = process.argv.includes('--json');
+  const out = await runVeilleCli(buildVeilleDeps(), { json });
   // eslint-disable-next-line no-console
-  console.log(summary);
+  console.log(out);
 }
 
 const isEntrypoint = process.argv[1] === fileURLToPath(import.meta.url);
