@@ -1,6 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 
-import { AGENT_ID, ALLOWED_CHAT_ID, agentMcpAllowlist } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, agentMcpAllowlist, SCHEDULER_TASK_TIMEOUT_MS } from './config.js';
 import {
   getDueTasks,
   getSession,
@@ -23,8 +23,10 @@ type Sender = (text: string) => Promise<void>;
 /** Max time (ms) a scheduled task can run before being killed.
  *  Configurable via SCHEDULER_TASK_TIMEOUT_MS ; default aligned on AGENT_TIMEOUT_MS (15 min)
  *  so the scheduler no longer kills a task the in-process agent is still allowed to run.
- *  Was a hard 10 min, which timed out the variable-length 16:00 /mailcheck run. */
-const TASK_TIMEOUT_MS = Number(process.env.SCHEDULER_TASK_TIMEOUT_MS) || 15 * 60 * 1000; // 15 minutes
+ *  Was a hard 10 min, which timed out the variable-length 16:00 /mailcheck run.
+ *  Resolved in config.ts (via envConfig) — reading process.env here never saw .env. */
+const TASK_TIMEOUT_MS = SCHEDULER_TASK_TIMEOUT_MS;
+const TASK_TIMEOUT_MIN = Math.round(TASK_TIMEOUT_MS / 60_000);
 
 let sender: Sender;
 
@@ -99,8 +101,8 @@ async function runDueTasks(): Promise<void> {
         clearTimeout(timeout);
 
         if (result.aborted) {
-          updateTaskAfterRun(task.id, nextRun, 'Timed out after 10 minutes', 'timeout');
-          await sender(`⏱ Task timed out after 10m: "${task.prompt.slice(0, 60)}..." — killed.`);
+          updateTaskAfterRun(task.id, nextRun, `Timed out after ${TASK_TIMEOUT_MIN} minutes`, 'timeout');
+          await sender(`⏱ Task timed out after ${TASK_TIMEOUT_MIN}m: "${task.prompt.slice(0, 60)}..." — killed.`);
           logger.warn({ taskId: task.id }, 'Task timed out');
           return;
         }
@@ -178,7 +180,7 @@ async function runDueMissionTasks(): Promise<void> {
           // Status is already 'cancelled' from the dashboard write — leave it.
           logger.info({ missionId: mission.id }, 'Mission task cancelled by user');
         } else {
-          completeMissionTask(mission.id, null, 'failed', 'Timed out after 10 minutes');
+          completeMissionTask(mission.id, null, 'failed', `Timed out after ${TASK_TIMEOUT_MIN} minutes`);
           logger.warn({ missionId: mission.id }, 'Mission task timed out');
           try {
             await sender('Mission task timed out: "' + mission.title + '"');

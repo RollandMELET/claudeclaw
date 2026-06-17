@@ -22,6 +22,7 @@ const envConfig = readEnvFile([
   'DB_ENCRYPTION_KEY',
   'GOOGLE_API_KEY',
   'AGENT_TIMEOUT_MS',
+  'SCHEDULER_TASK_TIMEOUT_MS',
   'AGENT_MAX_TURNS',
   'SECURITY_PIN_HASH',
   'IDLE_LOCK_MINUTES',
@@ -157,6 +158,18 @@ export const TYPING_REFRESH_MS = 4000;
 // (posting YouTube comments, sending multiple messages) leading to duplicate posts.
 export const AGENT_TIMEOUT_MS = parseInt(
   process.env.AGENT_TIMEOUT_MS || envConfig.AGENT_TIMEOUT_MS || '900000',
+  10,
+);
+
+// Hard cap (ms) per scheduled task in the scheduler, aligned by default on
+// AGENT_TIMEOUT_MS so the scheduler never kills a task the in-process agent is
+// still allowed to run. Read here via envConfig — NOT directly from process.env
+// in scheduler.ts, which never sees the .env file (config loads .env into the
+// local envConfig object, it is never injected into process.env). Bug #11.
+export const SCHEDULER_TASK_TIMEOUT_MS = parseInt(
+  process.env.SCHEDULER_TASK_TIMEOUT_MS ||
+    envConfig.SCHEDULER_TASK_TIMEOUT_MS ||
+    String(AGENT_TIMEOUT_MS),
   10,
 );
 
