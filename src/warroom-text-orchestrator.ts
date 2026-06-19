@@ -26,6 +26,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { HAIKU_MODEL } from './models.js';
 import { PROJECT_ROOT, CLAUDECLAW_CONFIG } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -537,7 +538,7 @@ export async function warmupMeeting(): Promise<void> {
       for await (const ev of query({
         prompt: singleTurn('say ok'),
         options: {
-          model: 'claude-haiku-4-5-20251001',
+          model: HAIKU_MODEL,
           allowedTools: [],
           disallowedTools: ['*'],
           settingSources: [],
@@ -625,7 +626,7 @@ export async function warmupAgentSDK(agentId: string): Promise<void> {
             // model; Anthropic's prompt cache spans models for the same
             // session less aggressively, but the subprocess + SDK +
             // MCP boot is the dominant cost we're amortizing here.
-            model: 'claude-haiku-4-5-20251001',
+            model: HAIKU_MODEL,
             allowedTools: [],
             disallowedTools: ['*'],
             settingSources: [],

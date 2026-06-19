@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { readEnvFile } from './env.js';
+import { HAIKU_MODEL } from './models.js';
 
 const envConfig = readEnvFile([
   'TELEGRAM_BOT_TOKEN',
@@ -38,6 +39,7 @@ const envConfig = readEnvFile([
   'PROTECTED_ENV_VARS',
   'MEMORY_NUDGE_INTERVAL_TURNS',
   'MEMORY_NUDGE_INTERVAL_HOURS',
+  'AUTODREAM_HOUR',
   'WARROOM_ENABLED',
   'WARROOM_PORT',
   'WARROOM_TEXT_INPUT',
@@ -263,7 +265,7 @@ export const SMART_ROUTING_ENABLED =
 export const SMART_ROUTING_CHEAP_MODEL =
   process.env.SMART_ROUTING_CHEAP_MODEL ||
   envConfig.SMART_ROUTING_CHEAP_MODEL ||
-  'claude-haiku-4-5';
+  HAIKU_MODEL;
 
 // Cost/usage footer displayed with agent responses.
 //   off     — no footer
@@ -313,6 +315,14 @@ export const MEMORY_NUDGE_INTERVAL_HOURS = parseInt(
   process.env.MEMORY_NUDGE_INTERVAL_HOURS || envConfig.MEMORY_NUDGE_INTERVAL_HOURS || '2',
   10,
 );
+
+// Auto-Dream: dedicated nightly memory-consolidation pass + contradiction
+// report pushed on Telegram. Local hour (0–23) to run the pass. Default 3
+// (03h, low thermal load on the Mac Mini). Invalid values fall back to 3.
+export const AUTODREAM_HOUR = (() => {
+  const h = parseInt(process.env.AUTODREAM_HOUR || envConfig.AUTODREAM_HOUR || '3', 10);
+  return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 3;
+})();
 
 // War Room voice meeting feature. Default: disabled. Requires separate
 // Python service (see warroom/) and DAILY_API_KEY + GOOGLE_API_KEY

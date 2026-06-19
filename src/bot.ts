@@ -7,6 +7,7 @@ import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 import { createHookRegistry, loadHooksFromDir, runHooks } from './hooks.js';
 
 import { runAgent, runAgentWithRetry, UsageInfo, AgentProgressEvent } from './agent.js';
+import { AVAILABLE_MODELS, DEFAULT_MODEL_LABEL, DEFAULT_MODEL } from './models.js';
 import { AgentError } from './errors.js';
 import {
   AGENT_ID,
@@ -147,12 +148,8 @@ function loadVoicePrefs(): void {
 // When not set, uses CLI default (Opus via Max/OAuth)
 const chatModelOverride = new Map<string, string>();
 
-const AVAILABLE_MODELS: Record<string, string> = {
-  opus: 'claude-opus-4-6',
-  sonnet: 'claude-sonnet-4-5',
-  haiku: 'claude-haiku-4-5',
-};
-const DEFAULT_MODEL_LABEL = 'opus';
+// AVAILABLE_MODELS, DEFAULT_MODEL_LABEL et DEFAULT_MODEL proviennent de
+// ./models (source unique de vérité des model IDs).
 
 export function setMainModelOverride(model: string): void {
   if (ALLOWED_CHAT_ID) chatModelOverride.set(ALLOWED_CHAT_ID, model);
@@ -544,7 +541,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
   const userModel = chatModelOverride.get(chatIdStr) ?? agentDefaultModel;
   const effectiveModel = (SMART_ROUTING_ENABLED && !userModel && classifyMessageComplexity(message) === 'simple')
     ? SMART_ROUTING_CHEAP_MODEL
-    : (userModel ?? 'claude-opus-4-6');
+    : (userModel ?? DEFAULT_MODEL);
 
   // Start typing immediately, then refresh on interval
   await sendTyping(ctx.api, chatId);
@@ -636,6 +633,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       },
       MODEL_FALLBACK_CHAIN.length > 0 ? MODEL_FALLBACK_CHAIN : undefined,
       agentMcpAllowlist,
+      chatIdStr,
     );
 
     clearTimeout(timeoutId);

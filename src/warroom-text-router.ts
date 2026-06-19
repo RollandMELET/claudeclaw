@@ -13,12 +13,13 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { HAIKU_MODEL } from './models.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { getScrubbedSdkEnv } from './security.js';
 import { isEnabled } from './kill-switches.js';
 
-const ROUTER_MODEL = 'claude-haiku-4-5-20251001';
+const ROUTER_MODEL = HAIKU_MODEL;
 // Budget: Claude Agent SDK subprocess cold-start is ~3-5s before the first
 // token even flows, plus Haiku's actual classification latency. 20s covers
 // p99 on a warm machine; the dashboard's progressive status bar hides this

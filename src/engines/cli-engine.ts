@@ -9,10 +9,12 @@
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-import { agentMcpAllowlist } from '../config.js';
+import { AGENT_ID, agentMcpAllowlist } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { loadMcpServers } from '../agent.js';
+import { scoreAction, isActionGateEnabled } from '../action-gate.js';
+import { audit } from '../security.js';
 import {
   Engine,
   EngineEvent,
@@ -88,6 +90,58 @@ export class CliEngine implements Engine {
       'CliEngine starting query',
     );
 
+    // ── Portail de validation d'actions (opt-in via ACTION_GATE_ENABLED) ──
+    // Quand le gate est OFF (defaut), `gateEnabled` est false : on conserve
+    // `permissionMode: 'bypassPermissions'` -> comportement INCHANGE.
+    // Quand il est ON, on retire bypassPermissions et on fournit un
+    // `canUseTool` qui score chaque outil avant execution :
+    //   allow    -> autorise
+    //   block    -> refuse (deny) + audit 'blocked'
+    //   validate -> refuse ce tour (deni securitaire MVP) avec un message
+    //               invitant a confirmer. Pas d'interception stateful.
+    const gateEnabled = isActionGateEnabled();
+    const chatId = options.chatId ?? 'unknown';
+
+    const canUseTool = async (
+      toolName: string,
+      input: Record<string, unknown>,
+    ): Promise<
+      | { behavior: 'allow'; updatedInput: Record<string, unknown> }
+      | { behavior: 'deny'; message: string }
+    > => {
+      const score = scoreAction({ toolName, toolInput: input, message });
+      if (score.verdict === 'allow') {
+        return { behavior: 'allow', updatedInput: input };
+      }
+      if (score.verdict === 'block') {
+        audit({
+          agentId: AGENT_ID,
+          chatId,
+          action: 'blocked',
+          detail: `action-gate BLOCK ${toolName}: ${score.reason}`,
+          blocked: true,
+        });
+        logger.warn({ toolName, reason: score.reason, risk: score.risk }, 'action-gate: BLOCK');
+        return {
+          behavior: 'deny',
+          message: `Action bloquee par le portail de securite : ${score.reason}. Cette operation est jugee dangereuse et ne sera pas executee.`,
+        };
+      }
+      // verdict === 'validate' : deni securitaire par defaut pour le MVP.
+      audit({
+        agentId: AGENT_ID,
+        chatId,
+        action: 'blocked',
+        detail: `action-gate VALIDATE-DENY ${toolName}: ${score.reason}`,
+        blocked: true,
+      });
+      logger.info({ toolName, reason: score.reason, risk: score.risk }, 'action-gate: VALIDATE (deny)');
+      return {
+        behavior: 'deny',
+        message: `Action a effet de bord (${toolName}) en attente de validation humaine : ${score.reason}. Reformule en confirmant explicitement que tu veux executer cette action, ou demande a l'operateur de l'autoriser.`,
+      };
+    };
+
     let didCompact = false;
     let preCompactTokens: number | null = null;
     let lastCallCacheRead = 0;
@@ -103,8 +157,12 @@ export class CliEngine implements Engine {
         cwd: options.cwd,
         resume: options.sessionId,
         settingSources: ['project', 'user'],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
+        // Gate OFF (defaut) -> bypassPermissions, comportement inchange.
+        // Gate ON -> mode 'default' + canUseTool (le SDK ignore canUseTool
+        // sous bypassPermissions, il faut donc sortir du bypass).
+        ...(gateEnabled
+          ? { permissionMode: 'default' as const, canUseTool }
+          : { permissionMode: 'bypassPermissions' as const, allowDangerouslySkipPermissions: true }),
         env: sdkEnv,
         includePartialMessages: !!options.streamText,
         ...(options.model ? { model: options.model } : {}),
