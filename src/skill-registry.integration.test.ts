@@ -31,12 +31,25 @@ describe('skill-registry — integration with real filesystem (fork)', () => {
     expect(ids.has('tldr')).toBe(true);
   });
 
-  it('finds global skills from ~/.claude/skills/ (>20 on this machine)', () => {
+  it('finds global skills present in ~/.claude/skills/ (count derived from disk)', () => {
     initSkillRegistry();
     const all = getAllSkills();
-    // Sanity floor: the user documented ~60 skills, require > 20 so the
-    // test doesn't flake if skills are pruned.
-    expect(all.length).toBeGreaterThan(20);
+    // Pas de seuil magique couple a une machine : on compte les skills
+    // globaux reellement presents sur disque (dossiers avec SKILL.md) et on
+    // verifie que le registre les enumere tous (+ les skills projet). Reste
+    // vert aussi bien sur la machine de dev (~60 skills) qu'en CI (peu).
+    const globalDir = path.join(os.homedir(), '.claude', 'skills');
+    let globalCount = 0;
+    if (fs.existsSync(globalDir)) {
+      globalCount = fs
+        .readdirSync(globalDir, { withFileTypes: true })
+        .filter(
+          (d) =>
+            d.isDirectory() &&
+            fs.existsSync(path.join(globalDir, d.name, 'SKILL.md')),
+        ).length;
+    }
+    expect(all.length).toBeGreaterThanOrEqual(globalCount);
   });
 
   it('getSkillIndex returns non-empty index with real skills', () => {
