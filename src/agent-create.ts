@@ -6,6 +6,7 @@ import { execSync, spawn } from 'child_process';
 import yaml from 'js-yaml';
 
 import { CLAUDECLAW_CONFIG, PROJECT_ROOT, STORE_DIR } from './config.js';
+import { SONNET_MODEL } from './models.js';
 import { listAgentIds, loadAgentConfig, resolveAgentDir, refreshWarRoomRoster } from './agent-config.js';
 import { refreshAgentRegistry } from './orchestrator.js';
 import { atomicEnvWrite } from './env-write.js';
@@ -299,7 +300,7 @@ export async function createAgent(opts: CreateAgentOpts): Promise<CreateAgentRes
     name,
     description,
     telegram_bot_token_env: envKey,
-    model: model || 'claude-sonnet-4-6',
+    model: model || SONNET_MODEL,
   };
   fs.writeFileSync(
     path.join(agentDir, 'agent.yaml'),

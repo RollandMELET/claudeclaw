@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { readEnvFile } from './env.js';
+import { HAIKU_MODEL } from './models.js';
 
 const envConfig = readEnvFile([
   'TELEGRAM_BOT_TOKEN',
@@ -263,7 +264,7 @@ export const SMART_ROUTING_ENABLED =
 export const SMART_ROUTING_CHEAP_MODEL =
   process.env.SMART_ROUTING_CHEAP_MODEL ||
   envConfig.SMART_ROUTING_CHEAP_MODEL ||
-  'claude-haiku-4-5';
+  HAIKU_MODEL;
 
 // Cost/usage footer displayed with agent responses.
 //   off     — no footer

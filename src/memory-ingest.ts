@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { HAIKU_MODEL } from './models.js';
 import { generateContent, parseJsonResponse } from './gemini.js';
 import { cosineSimilarity, embedText } from './embeddings.js';
 import { getMemoriesWithEmbeddings, saveStructuredMemoryAtomic } from './db.js';
@@ -59,7 +60,7 @@ export async function extractViaClaude(prompt: string, timeoutMs = 15_000): Prom
     for await (const ev of query({
       prompt: turn(),
       options: {
-        model: 'claude-haiku-4-5-20251001',
+        model: HAIKU_MODEL,
         allowedTools: [],
         disallowedTools: ['*'],
         settingSources: [],

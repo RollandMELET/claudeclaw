@@ -6,6 +6,7 @@ import { serve } from '@hono/node-server';
 import fs from 'fs';
 import path from 'path';
 import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_URL, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel, CLAUDECLAW_CONFIG } from './config.js';
+import { VALID_MODELS, DEFAULT_MODEL } from './models.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -1887,7 +1888,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
           id,
           name: config.name,
           description: config.description,
-          model: mainOverride ?? config.model ?? 'claude-opus-4-6',
+          model: mainOverride ?? config.model ?? DEFAULT_MODEL,
           running,
           todayTurns: stats.todayTurns,
           todayCost: stats.todayCost,
@@ -1912,7 +1913,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     }
     const mainStats = getAgentTokenStats('main');
     const allAgents = [
-      { id: 'main', name: 'Main', description: 'Primary ClaudeClaw bot', model: getMainModelOverride() ?? 'claude-opus-4-6', running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost, avatar_etag: avatarEtagForId('main') },
+      { id: 'main', name: 'Main', description: 'Primary ClaudeClaw bot', model: getMainModelOverride() ?? DEFAULT_MODEL, running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost, avatar_etag: avatarEtagForId('main') },
       ...agents,
     ];
 
@@ -1952,7 +1953,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = VALID_MODELS;
     if (!validModels.includes(model)) return c.json({ error: `Invalid model` }, 400);
 
     const agentIds = listAgentIds();
@@ -1977,7 +1978,7 @@ export function buildDashboardApp(botApi?: Api<RawApi>): Hono {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = VALID_MODELS;
     if (!validModels.includes(model)) return c.json({ error: `Invalid model. Valid: ${validModels.join(', ')}` }, 400);
 
     try {
