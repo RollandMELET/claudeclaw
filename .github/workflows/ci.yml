@@ -21,10 +21,11 @@ concurrency:
 jobs:
   build-and-test:
     # macos-latest = Apple Silicon, plateforme cible du projet (better-sqlite3
-    # natif, ffmpeg/say preinstalles pour les tests voix). Les tests
+    # natif, `say` preinstalle pour les tests voix). Les tests
     # synthesizeSpeechLocal sont guardes (`if (!isMac) return`) mais utilisent
-    # `say` + ffmpeg uniquement dispos sur macOS. ubuntu ne suffirait pas sans
-    # installer ffmpeg, et on veut une CI fidele a la prod (Mac Mini M4).
+    # `say` + ffmpeg : `say` est natif macOS, ffmpeg est installe via brew
+    # ci-dessous (PAS preinstalle sur les runners GitHub). CI fidele a la prod
+    # (Mac Mini M4).
     runs-on: macos-latest
 
     env:
@@ -41,6 +42,12 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.13"
+
+      # ffmpeg n'est PAS preinstalle sur les runners macOS GitHub. Requis par
+      # synthesizeSpeechLocal (voice.test.ts) qui convertit la sortie `say` en
+      # OGG Opus. Sans lui, le test echoue (buffer vide).
+      - name: Install ffmpeg
+        run: brew install ffmpeg
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
