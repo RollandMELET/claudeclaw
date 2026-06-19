@@ -23,6 +23,12 @@ export interface EngineOptions {
   streamText?: boolean;
   /** When true, the engine yields `progress` events for tool/sub-agent activity. */
   emitProgress?: boolean;
+  /**
+   * Chat ID d'origine (Telegram), utilise pour tracer les verdicts du
+   * portail de validation d'actions (action gate). Optionnel : absent ->
+   * audit avec chatId 'unknown'.
+   */
+  chatId?: string;
 }
 
 /** Per-turn usage metrics surfaced in the final `result` event. */

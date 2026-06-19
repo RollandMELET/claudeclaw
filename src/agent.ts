@@ -136,6 +136,7 @@ export async function runAgent(
   abortController?: AbortController,
   onStreamText?: (accumulatedText: string) => void,
   mcpAllowlist?: string[],
+  chatId?: string,
 ): Promise<AgentResult> {
   // Centralized kill-switch enforcement. Throws KillSwitchDisabledError if
   // LLM_SPAWN_ENABLED has been flipped off — caller is expected to surface
@@ -178,6 +179,7 @@ export async function runAgent(
       abortController,
       streamText: !!onStreamText,
       emitProgress: !!onProgress,
+      chatId,
     });
 
     for await (const ev of events) {
@@ -250,6 +252,7 @@ export async function runAgentWithRetry(
   onRetry?: (attempt: number, error: AgentError) => void,
   fallbackModels?: string[],
   mcpAllowlist?: string[],
+  chatId?: string,
 ): Promise<AgentResult> {
   let lastError: AgentError | undefined;
 
@@ -264,7 +267,7 @@ export async function runAgentWithRetry(
       return await runAgent(
         message, sessionId, onTyping, onProgress,
         currentModel, abortController, onStreamText,
-        mcpAllowlist,
+        mcpAllowlist, chatId,
       );
     } catch (err) {
       if (!(err instanceof AgentError)) throw err;

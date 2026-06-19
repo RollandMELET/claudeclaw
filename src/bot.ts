@@ -633,6 +633,7 @@ async function handleMessage(ctx: Context, message: string, forceVoiceReply = fa
       },
       MODEL_FALLBACK_CHAIN.length > 0 ? MODEL_FALLBACK_CHAIN : undefined,
       agentMcpAllowlist,
+      chatIdStr,
     );
 
     clearTimeout(timeoutId);
