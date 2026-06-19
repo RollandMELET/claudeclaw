@@ -1302,6 +1302,53 @@ export function saveConsolidationAtomic(
   return txn();
 }
 
+/**
+ * A superseded memory paired with the memory that now replaces it. Used by the
+ * Auto-Dream nightly report to surface stale/contradictory memories for human
+ * review. `stale_*` is the memory that was superseded; `new_*` is the
+ * authoritative replacement (pointed to by superseded_by).
+ */
+export interface SupersededPair {
+  stale_id: number;
+  stale_summary: string;
+  stale_created_at: number;
+  new_id: number;
+  new_summary: string;
+  new_created_at: number;
+}
+
+/**
+ * List memories that were recently superseded (superseded_by IS NOT NULL),
+ * joined with the memory that replaced them. `sinceTs` (unix seconds) bounds
+ * the window using the *replacement* memory's created_at so the report only
+ * covers contradictions resolved during the relevant period. Pass 0 to list
+ * all currently-superseded memories.
+ */
+export function getRecentlySupersededMemories(
+  chatId: string,
+  sinceTs = 0,
+  limit = 50,
+): SupersededPair[] {
+  return db
+    .prepare(
+      `SELECT
+         stale.id           AS stale_id,
+         stale.summary      AS stale_summary,
+         stale.created_at   AS stale_created_at,
+         fresh.id           AS new_id,
+         fresh.summary      AS new_summary,
+         fresh.created_at   AS new_created_at
+       FROM memories AS stale
+       JOIN memories AS fresh ON stale.superseded_by = fresh.id
+       WHERE stale.chat_id = ?
+         AND stale.superseded_by IS NOT NULL
+         AND fresh.created_at >= ?
+       ORDER BY fresh.created_at DESC
+       LIMIT ?`,
+    )
+    .all(chatId, sinceTs, limit) as SupersededPair[];
+}
+
 export function getRecentConsolidations(chatId: string, limit = 5): Consolidation[] {
   return db
     .prepare(

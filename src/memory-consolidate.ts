@@ -6,6 +6,7 @@ import {
 } from './db.js';
 import { embedText } from './embeddings.js';
 import { logger } from './logger.js';
+import { sendSupersededReport, type ReportSender } from './memory-report.js';
 
 interface ConsolidationResult {
   summary: string;
@@ -169,4 +170,83 @@ export async function runConsolidation(chatId: string): Promise<void> {
   } finally {
     consolidatingChats.delete(chatId);
   }
+}
+
+// ── Auto-Dream: dedicated nightly consolidation pass + contradiction report ──
+//
+// The 30-min interval applies contradictions silently. Auto-Dream adds (a) a
+// dedicated pass at ~03h (low thermal load on the Mac Mini) that forces a
+// consolidation, and (b) a human-readable Telegram report of stale /
+// contradictory memories for manual validation. It is IN ADDITION to the
+// 30-min pass (not a replacement) and is idempotent — it reuses runConsolidation's
+// overlap guard, and a per-day date marker prevents a double-run within the
+// trigger window.
+
+/** Local-date key (YYYY-MM-DD) used to ensure Auto-Dream runs at most once/day. */
+function dateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Pure trigger decision for the nightly pass. Returns true when `now` falls in
+ * the target hour AND Auto-Dream has not already run today (`lastRunDate` is the
+ * date key of the last successful trigger, or null if never).
+ *
+ * Window = the whole `targetHour` (e.g. 03:00–03:59), so a check interval up to
+ * ~30 min is guaranteed to land inside it at least once.
+ */
+export function shouldRunAutoDream(
+  now: Date,
+  lastRunDate: string | null,
+  targetHour: number,
+): boolean {
+  if (now.getHours() !== targetHour) return false;
+  return lastRunDate !== dateKey(now);
+}
+
+/**
+ * Run the nightly Auto-Dream pass once: force a consolidation for the chat,
+ * then push the contradiction/stale-memory report via `sender`. The report
+ * covers contradictions resolved in the last 24h. Resilient: a failure in
+ * either step is logged, never thrown.
+ */
+export async function runAutoDream(chatId: string, sender: ReportSender): Promise<void> {
+  logger.info({ chatId }, 'Auto-Dream nightly pass starting');
+  await runConsolidation(chatId);
+  const since = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
+  try {
+    await sendSupersededReport(chatId, sender, since);
+  } catch (err) {
+    logger.error({ err, chatId }, 'Auto-Dream report step failed');
+  }
+  logger.info({ chatId }, 'Auto-Dream nightly pass complete');
+}
+
+/**
+ * Wire the nightly Auto-Dream pass. Polls every `checkIntervalMs` (default
+ * 15 min) and triggers runAutoDream at most once per day inside the `targetHour`
+ * window. Returns the interval handle so callers can clear it (and for tests).
+ *
+ * @param targetHour 0–23, the local hour to run (AUTODREAM_HOUR, default 3)
+ */
+export function initAutoDream(
+  chatId: string,
+  sender: ReportSender,
+  targetHour: number,
+  checkIntervalMs = 15 * 60 * 1000,
+): ReturnType<typeof setInterval> {
+  let lastRunDate: string | null = null;
+  const handle = setInterval(() => {
+    const now = new Date();
+    if (!shouldRunAutoDream(now, lastRunDate, targetHour)) return;
+    lastRunDate = dateKey(now);
+    void runAutoDream(chatId, sender).catch((err) =>
+      logger.error({ err, chatId }, 'Auto-Dream pass failed'),
+    );
+  }, checkIntervalMs);
+  logger.info({ targetHour }, `Auto-Dream enabled (nightly pass at ~${targetHour}h)`);
+  return handle;
 }
