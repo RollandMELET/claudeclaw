@@ -4,13 +4,13 @@ import path from 'path';
 import { loadAgentConfig, listAgentIds, resolveAgentDir, resolveAgentClaudeMd, refreshWarRoomRoster } from './agent-config.js';
 import { createBot } from './bot.js';
 import { checkPendingMigrations } from './migrations.js';
-import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT } from './config.js';
+import { ALLOWED_CHAT_ID, activeBotToken, STORE_DIR, PROJECT_ROOT, CLAUDECLAW_CONFIG, GOOGLE_API_KEY, setAgentOverrides, SECURITY_PIN_HASH, IDLE_LOCK_MINUTES, EMERGENCY_KILL_PHRASE, WARROOM_ENABLED, WARROOM_PORT, AUTODREAM_HOUR } from './config.js';
 import { startDashboard } from './dashboard.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
 import { initSecurity, setAuditCallback } from './security.js';
 import { logger } from './logger.js';
 import { cleanupOldUploads } from './media.js';
-import { runConsolidation } from './memory-consolidate.js';
+import { runConsolidation, initAutoDream } from './memory-consolidate.js';
 import { runDecaySweep } from './memory.js';
 import { runWarroomAvatarMigration } from './avatars.js';
 import { initOAuthHealthCheck } from './oauth-health.js';
@@ -198,6 +198,24 @@ async function main(): Promise<void> {
   // Dashboard only runs in the main bot process
   if (AGENT_ID === 'main') {
     startDashboard(bot.api);
+
+    // Auto-Dream: dedicated nightly consolidation pass (~03h, configurable via
+    // AUTODREAM_HOUR) plus a human-readable contradiction/stale-memory report
+    // pushed on Telegram for manual validation. In addition to the 30-min pass.
+    if (ALLOWED_CHAT_ID && GOOGLE_API_KEY) {
+      initAutoDream(
+        ALLOWED_CHAT_ID,
+        async (html) => {
+          const { splitMessage } = await import('./bot.js');
+          for (const chunk of splitMessage(html)) {
+            await bot.api.sendMessage(ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
+              logger.error({ err }, 'Auto-Dream report failed to send'),
+            );
+          }
+        },
+        AUTODREAM_HOUR,
+      );
+    }
 
     // War Room voice server (auto-start if enabled, with auto-respawn)
     if (WARROOM_ENABLED) {
