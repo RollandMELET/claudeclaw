@@ -3,12 +3,18 @@
 // en echec est loggue et n'interrompt pas les autres. Declenchable manuel (CLI) et cron.
 import { logger } from '../logger.js';
 
+import { collectCircabc } from './collectors/circabc.js';
 import { collectEping } from './collectors/eping.js';
 import { collectEurlex } from './collectors/eurlex.js';
 import { collectInstitutional } from './collectors/institutional.js';
 import type { CollectMethod, DppItem, Source } from './types.js';
 
-export type HttpGet = (url: string) => Promise<string>;
+// Contrat HTTP elargi : 2e parametre optionnel `init` pour porter des en-tetes (auth CIRCABC).
+// Retrocompatible : les collecteurs a 1 argument restent assignables (param optionnel).
+export type HttpGet = (
+  url: string,
+  init?: { headers?: Record<string, string> },
+) => Promise<string>;
 
 export interface CollectDeps {
   httpGet: HttpGet;
@@ -26,10 +32,13 @@ export interface CollectResult {
 
 type Collector = (source: Source, httpGet: HttpGet) => Promise<DppItem[]>;
 
+// Toutes les methodes du registre ont un collecteur. Le guard `if (!collector)` dans
+// collect() reste un filet pour une methode future non encore cablee.
 const COLLECTORS: Record<CollectMethod, Collector> = {
   'eurlex-rss': collectEurlex,
   'eping-api': collectEping,
   'institutional-scrape': collectInstitutional,
+  'circabc-api': collectCircabc,
 };
 
 /**
@@ -37,13 +46,18 @@ const COLLECTORS: Record<CollectMethod, Collector> = {
  * navigateur : nombre de sites institutionnels (ex: CEN-CENELEC) rejettent la connexion
  * (WAF anti-bot) sans UA, ce qui se manifeste par un 'fetch failed'. Timeout 20s.
  */
-export async function defaultHttpGet(url: string): Promise<string> {
+export async function defaultHttpGet(
+  url: string,
+  init?: { headers?: Record<string, string> },
+): Promise<string> {
   const res = await fetch(url, {
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       Accept:
         'text/html,application/xhtml+xml,application/xml,application/rss+xml;q=0.9,*/*;q=0.8',
+      // L'appelant override en dernier (ex: CIRCABC impose Accept: application/json).
+      ...init?.headers,
     },
     signal: AbortSignal.timeout(20_000),
   });

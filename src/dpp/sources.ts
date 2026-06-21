@@ -16,6 +16,7 @@ const VALID_METHODS: readonly CollectMethod[] = [
   'eurlex-rss',
   'eping-api',
   'institutional-scrape',
+  'circabc-api',
 ];
 
 const REQUIRED_FIELDS: (keyof Source)[] = [

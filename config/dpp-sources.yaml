@@ -5,7 +5,7 @@
 #   T3 Experts / cabinets (interpretation)   -> Phase 3
 #   T4 Social / presse (a corroborer)        -> Phase 3
 # poles : reglementaire | normalisation | institutionnel | experts | social
-# methode : eurlex-rss | eping-api | institutional-scrape
+# methode : eurlex-rss | eping-api | institutional-scrape | circabc-api
 # NOTE 2026-06-03 : EUR-Lex ne fournit pas de RSS par requete sans login (flux Cellar trop
 #   larges) -> les sources EUR-Lex passent en institutional-scrape sur pages server-rendered.
 #   ePing OMC n'a pas d'API publique sans cle (cf. apiportal.wto.org) -> scrape degrade,
@@ -77,3 +77,13 @@ sources:
     tier: T2
     methode: institutional-scrape
     frequence: weekly
+
+  - id: circabc-espr
+    nom: "CIRCABC - Commission ESPR / DPP (groupe officiel)"
+    # App Angular, scrape classique impossible. API REST CIRCABC (Basic guest:),
+    # crawl recursif borne de la bibliotheque du groupe (un item par document).
+    url: "https://circabc.europa.eu/ui/group/418195ae-4919-45fa-a959-3b695c9aab28/library"
+    pole: reglementaire
+    tier: T1
+    methode: circabc-api
+    frequence: daily

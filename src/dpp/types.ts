@@ -7,7 +7,7 @@ export type Tier = 'T1' | 'T2' | 'T3' | 'T4';
 export const TIERS: readonly Tier[] = ['T1', 'T2', 'T3', 'T4'] as const;
 
 /** Méthodes de collecte supportées (une méthode = un collecteur). */
-export type CollectMethod = 'eurlex-rss' | 'eping-api' | 'institutional-scrape';
+export type CollectMethod = 'eurlex-rss' | 'eping-api' | 'institutional-scrape' | 'circabc-api';
 
 /** Une source surveillée, déclarée dans config/dpp-sources.yaml. */
 export interface Source {
