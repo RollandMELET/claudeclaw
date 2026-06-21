@@ -14,10 +14,34 @@ const DEFAULT_REGISTRY = path.resolve(__dirname, '../../config/dpp-sources.yaml'
 
 const VALID_METHODS: readonly CollectMethod[] = [
   'eurlex-rss',
+  'eurlex-cellar',
   'eping-api',
   'institutional-scrape',
   'circabc-api',
 ];
+
+/**
+ * Garde-fou methode <-> url : un collecteur structure pointe sur la mauvaise forme d'url
+ * echoue silencieusement (0 item) ou plante au runtime. On rejette le couple incoherent
+ * AU CHARGEMENT (bruyant) plutot qu'en silence pendant la collecte. `institutional-scrape`
+ * est le catch-all : seule une url http(s) est exigee.
+ */
+function validateMethodeUrl(methode: CollectMethod, url: string, id: string): void {
+  const checks: Record<CollectMethod, { ok: (u: string) => boolean; attendu: string }> = {
+    'eurlex-cellar': { ok: (u) => /^cellar:(family|based-on):/i.test(u), attendu: 'cellar:{family|based-on}:{CELEX}' },
+    'eurlex-rss': { ok: (u) => /(rss|feed|atom)/i.test(u), attendu: 'une url de flux (rss/feed/atom)' },
+    'eping-api': { ok: (u) => /wto\.org/i.test(u), attendu: 'un endpoint API WTO (wto.org)' },
+    'circabc-api': { ok: (u) => /\/ui\/group\//i.test(u), attendu: 'une url de groupe CIRCABC (/ui/group/)' },
+    'institutional-scrape': { ok: (u) => /^https?:\/\//i.test(u), attendu: 'une url http(s)' },
+  };
+  const check = checks[methode];
+  if (check && !check.ok(url)) {
+    throw new Error(
+      `Registre DPP invalide : url "${url}" incoherente avec methode "${methode}" ` +
+        `(attendu ${check.attendu}) (source ${id}).`,
+    );
+  }
+}
 
 const REQUIRED_FIELDS: (keyof Source)[] = [
   'id',
@@ -54,6 +78,7 @@ export function loadRegistry(yamlText: string): Source[] {
     if (!VALID_METHODS.includes(s.methode as CollectMethod)) {
       throw new Error(`Registre DPP invalide : methode inconnue "${String(s.methode)}" (source ${String(s.id)}).`);
     }
+    validateMethodeUrl(s.methode as CollectMethod, s.url as string, String(s.id));
     if (seen.has(s.id as string)) {
       throw new Error(`Registre DPP invalide : id duplique "${String(s.id)}".`);
     }

@@ -3,8 +3,9 @@ import { describe, it, expect } from 'vitest';
 
 import { collect, type HttpGet } from '../collect.js';
 import { collectCircabc } from '../collectors/circabc.js';
-import { collectEping } from '../collectors/eping.js';
+import { collectEping, buildEpingHeaders } from '../collectors/eping.js';
 import { collectEurlex } from '../collectors/eurlex.js';
+import { collectEurlexCellar, parseCellarSeed } from '../collectors/eurlex-cellar.js';
 import { collectInstitutional } from '../collectors/institutional.js';
 import { contentHash } from '../dedup.js';
 import type { Source } from '../types.js';
@@ -324,6 +325,117 @@ describe('F-02: Collecte multi-source', () => {
       expect(errors).toHaveLength(1);
       expect(errors[0].sourceId).toBe('circabc-espr');
       expect(errors[0].error).toMatch(/groupId/i);
+    });
+  });
+
+  describe('AC-06: collecteur EUR-Lex CELLAR (SPARQL, multi-items)', () => {
+    const SPARQL_PREFIX = 'http://publications.europa.eu/webapi/rdf/sparql';
+    const cellarSource = src({
+      id: 'eurlex-actes-delegues',
+      methode: 'eurlex-cellar',
+      tier: 'T1',
+      pole: 'reglementaire',
+      url: 'cellar:based-on:32023R1542',
+    });
+
+    // Reponse SPARQL reelle (shape sparql-results+json) : 2 actes + 1 binding sans celex.
+    const SPARQL_JSON = JSON.stringify({
+      head: { vars: ['celex', 'date', 'title'] },
+      results: {
+        bindings: [
+          { celex: { value: '32025R2289' }, date: { value: '2025-11-13' }, title: { value: 'Reglement d execution (UE) 2025/2289' } },
+          { celex: { value: '32025R0606' }, date: { value: '2025-03-21' } }, // sans title -> fallback celex
+          { date: { value: '2024-01-01' } }, // sans celex -> filtre
+        ],
+      },
+    });
+
+    function sparqlHttp(payload: string): HttpGet {
+      return async (url: string) => {
+        if (url.startsWith(SPARQL_PREFIX)) return payload;
+        throw new Error(`no fixture for ${url}`);
+      };
+    }
+
+    it('parseCellarSeed extrait mode + celex, throw si invalide', () => {
+      expect(parseCellarSeed('cellar:based-on:32023R1542')).toEqual({ mode: 'based-on', celex: '32023R1542' });
+      expect(parseCellarSeed('cellar:family:32023R1542')).toEqual({ mode: 'family', celex: '32023R1542' });
+      expect(() => parseCellarSeed('https://eur-lex.europa.eu/x')).toThrow(/seed cellar/i);
+    });
+
+    it('emet un DppItem par binding avec celex (les bindings sans celex sont filtres)', async () => {
+      const items = await collectEurlexCellar(cellarSource, sparqlHttp(SPARQL_JSON));
+      expect(items).toHaveLength(2); // le 3e binding (sans celex) est ecarte
+    });
+
+    it('mappe title/url/date/content/theme/tier et trie par celex (deterministe)', async () => {
+      const items = await collectEurlexCellar(cellarSource, sparqlHttp(SPARQL_JSON));
+      // tri localeCompare : 32025R0606 avant 32025R2289
+      expect(items[0].url).toBe('https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:32025R0606');
+      expect(items[0].title).toBe('32025R0606'); // pas de title -> fallback celex
+      expect(items[1].url).toContain('CELEX:32025R2289');
+      expect(items[1].title).toBe('Reglement d execution (UE) 2025/2289');
+      expect(items[1].publishedAt).toBe(new Date('2025-11-13').toISOString());
+      expect(items[1].theme).toBe('reglementaire');
+      expect(items[1].sourceTier).toBe('T1');
+      expect(items[1].content).toBe('32025R2289|2025-11-13');
+    });
+
+    it('bindings vides -> [] (tolerant)', async () => {
+      const empty = JSON.stringify({ results: { bindings: [] } });
+      expect(await collectEurlexCellar(cellarSource, sparqlHttp(empty))).toHaveLength(0);
+      const noResults = JSON.stringify({ head: {} });
+      expect(await collectEurlexCellar(cellarSource, sparqlHttp(noResults))).toHaveLength(0);
+    });
+
+    it('reponse non-JSON -> throw isole par collect() (errors)', async () => {
+      const { items, errors } = await collect([cellarSource], { httpGet: sparqlHttp('<html>oops</html>') });
+      expect(items).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].sourceId).toBe('eurlex-actes-delegues');
+    });
+
+    it('family : un seed CELEX consolide (hyphene) derive la famille de base, pas une seule version', async () => {
+      // Garde-fou anti echec-silencieux : sans strip du suffixe, la requete ne matcherait
+      // qu'une version consolidee precise au lieu de toute la famille.
+      let captured = '';
+      const http: HttpGet = async (url) => {
+        captured = url;
+        return JSON.stringify({ results: { bindings: [] } });
+      };
+      const hyphenated = src({
+        id: 'eurlex-32023R1542',
+        methode: 'eurlex-cellar',
+        tier: 'T1',
+        url: 'cellar:family:02023R1542-20250731',
+      });
+      await collectEurlexCellar(hyphenated, http);
+      const query = decodeURIComponent(captured.split('?query=')[1] ?? '');
+      expect(query).toContain('2023R1542');
+      expect(query).not.toContain('2023R1542-20250731'); // suffixe de consolidation strippe
+    });
+  });
+
+  describe('AC-07: auth ePing API WTO (header injecte)', () => {
+    it('buildEpingHeaders : Accept toujours, cle WTO seulement si env definie', () => {
+      const prev = process.env.WTO_API_KEY;
+      delete process.env.WTO_API_KEY;
+      expect(buildEpingHeaders()).toEqual({ Accept: 'application/json' });
+
+      process.env.WTO_API_KEY = 'test-wto-key';
+      expect(buildEpingHeaders()).toEqual({
+        Accept: 'application/json',
+        'Ocp-Apim-Subscription-Key': 'test-wto-key',
+      });
+
+      if (prev === undefined) delete process.env.WTO_API_KEY;
+      else process.env.WTO_API_KEY = prev;
+    });
+
+    it('collectEping reste compatible avec un httpGet 1-arg (pas de regression)', async () => {
+      const items = await collectEping(epingSource, async () => EPING_JSON);
+      expect(items).toHaveLength(1);
+      expect(items[0].title).toContain('battery labelling');
     });
   });
 

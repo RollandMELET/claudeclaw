@@ -6,6 +6,7 @@ import { logger } from '../logger.js';
 import { collectCircabc } from './collectors/circabc.js';
 import { collectEping } from './collectors/eping.js';
 import { collectEurlex } from './collectors/eurlex.js';
+import { collectEurlexCellar } from './collectors/eurlex-cellar.js';
 import { collectInstitutional } from './collectors/institutional.js';
 import type { CollectMethod, DppItem, Source } from './types.js';
 
@@ -36,6 +37,7 @@ type Collector = (source: Source, httpGet: HttpGet) => Promise<DppItem[]>;
 // collect() reste un filet pour une methode future non encore cablee.
 const COLLECTORS: Record<CollectMethod, Collector> = {
   'eurlex-rss': collectEurlex,
+  'eurlex-cellar': collectEurlexCellar,
   'eping-api': collectEping,
   'institutional-scrape': collectInstitutional,
   'circabc-api': collectCircabc,

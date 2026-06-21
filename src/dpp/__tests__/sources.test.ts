@@ -9,7 +9,7 @@ const VALID_YAML = `
 sources:
   - id: src-a
     nom: "Source A"
-    url: "https://example.org/a"
+    url: "https://example.org/a/rss"
     pole: reglementaire
     tier: T1
     methode: eurlex-rss
@@ -70,6 +70,22 @@ describe('F-01: Registre des sources hierarchise', () => {
     it('rejette un id duplique', () => {
       const dup = VALID_YAML + VALID_YAML.split('sources:')[1];
       expect(() => loadRegistry(dup)).toThrow();
+    });
+
+    it('rejette un couple methode<->url incoherent (eurlex-cellar + url HTML)', () => {
+      const bad = VALID_YAML
+        .replace('methode: eurlex-rss', 'methode: eurlex-cellar')
+        .replace('url: "https://example.org/a/rss"', 'url: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542"');
+      expect(() => loadRegistry(bad)).toThrow(/incoherente|methode/i);
+    });
+
+    it('accepte un seed CELLAR coherent avec eurlex-cellar', () => {
+      const ok = VALID_YAML
+        .replace('methode: eurlex-rss', 'methode: eurlex-cellar')
+        .replace('url: "https://example.org/a/rss"', 'url: "cellar:based-on:32023R1542"');
+      const sources = loadRegistry(ok);
+      expect(sources[0].methode).toBe('eurlex-cellar');
+      expect(sources[0].url).toBe('cellar:based-on:32023R1542');
     });
   });
 

@@ -5,33 +5,38 @@
 #   T3 Experts / cabinets (interpretation)   -> Phase 3
 #   T4 Social / presse (a corroborer)        -> Phase 3
 # poles : reglementaire | normalisation | institutionnel | experts | social
-# methode : eurlex-rss | eping-api | institutional-scrape | circabc-api
-# NOTE 2026-06-03 : EUR-Lex ne fournit pas de RSS par requete sans login (flux Cellar trop
-#   larges) -> les sources EUR-Lex passent en institutional-scrape sur pages server-rendered.
-#   ePing OMC n'a pas d'API publique sans cle (cf. apiportal.wto.org) -> scrape degrade,
-#   integration API a faire en Phase 3.
+# methode : eurlex-rss | eurlex-cellar | eping-api | institutional-scrape | circabc-api
+# NOTE 2026-06-21 : EUR-Lex bascule sur eurlex-cellar (SPARQL public CELLAR, donnees
+#   structurees par CELEX, sans auth). url = seed `cellar:{family|based-on}:{CELEX}`.
+#   ePing OMC reste en institutional-scrape (fallback) tant que la cle WTO n'est pas obtenue ;
+#   une fois la cle en place -> methode eping-api + endpoint api.wto.org (gateway confirme :
+#   401 "missing subscription key", en-tete Ocp-Apim-Subscription-Key via env WTO_API_KEY).
+#   Portail d'abonnement presume apiportal.wto.org (non sonde, deduction Azure APIM standard).
+#   (Avant : tout en scrape, NOTE 2026-06-03.)
 
 sources:
   - id: eurlex-32023R1542
-    nom: "EUR-Lex - Reglement (UE) 2023/1542 (batteries), texte en vigueur"
-    url: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542"
+    nom: "EUR-Lex - Reglement (UE) 2023/1542 (batteries), texte en vigueur + consolidations"
+    # Seed CELLAR mode `family` : le texte de base et ses versions consolidees (un item par version).
+    url: "cellar:family:32023R1542"
     pole: reglementaire
     tier: T1
-    methode: institutional-scrape
+    methode: eurlex-cellar
     frequence: daily
 
   - id: eurlex-actes-delegues
-    nom: "EUR-Lex - Recherche actes delegues et d'execution (batteries)"
-    url: "https://eur-lex.europa.eu/search.html?scope=EURLEX&text=battery%20regulation&type=quick&lang=en"
+    nom: "EUR-Lex - Actes delegues et d'execution lies au reglement batteries"
+    # Seed CELLAR mode `based-on` : les actes delegues / d'execution bases sur 32023R1542.
+    url: "cellar:based-on:32023R1542"
     pole: reglementaire
     tier: T1
-    methode: institutional-scrape
+    methode: eurlex-cellar
     frequence: daily
 
   - id: eping-omc-batteries
-    nom: "ePing OMC - Notifications TBT batteries (scrape degrade)"
-    # TODO Phase 3 : remplacer par l'API WTO (apiportal.wto.org, cle requise). L'API SPA
-    # eping.wto.org/api n'est pas exposee en GET simple. En attendant, snapshot de la page.
+    nom: "ePing OMC - Notifications TBT batteries (scrape degrade, fallback)"
+    # Reste en scrape tant que la cle WTO n'est pas obtenue (cf. NOTE en tete). Une fois la cle
+    # en place : methode eping-api + url endpoint api.wto.org (collectEping lit WTO_API_KEY).
     url: "https://eping.wto.org/en/Search/Index?domainIds=2"
     pole: reglementaire
     tier: T1
@@ -80,8 +85,8 @@ sources:
 
   - id: circabc-espr
     nom: "CIRCABC - Commission ESPR / DPP (groupe officiel)"
-    # App Angular, scrape classique impossible. API REST CIRCABC (Basic guest:),
-    # crawl recursif borne de la bibliotheque du groupe (un item par document).
+    # App Angular, scrape classique impossible. Utiliser API REST CIRCABC
+    # ou Playwright. Watcher n8n a cabler (mission RC2).
     url: "https://circabc.europa.eu/ui/group/418195ae-4919-45fa-a959-3b695c9aab28/library"
     pole: reglementaire
     tier: T1
